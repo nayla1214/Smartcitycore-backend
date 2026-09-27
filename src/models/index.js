@@ -12,6 +12,7 @@ const Option = require('./Option');
 const EvaluationAttempt = require('./EvaluationAttempt');
 const UserCourse = require('./UserCourse');
 const Certificate = require('./Certificate');
+const Foro = require('./Foro');
 
 // Relaciones de Curso y Módulos
 Course.hasMany(Module, { foreignKey: 'courseId' });
@@ -60,6 +61,8 @@ Certificate.belongsTo(User, { foreignKey: 'userId' });
 Course.hasMany(Certificate, { foreignKey: 'courseId' });
 Certificate.belongsTo(Course, { foreignKey: 'courseId' });
 
+User.hasMany(Foro, { foreignKey: 'userId' });
+Foro.belongsTo(User, { foreignKey: 'userId' });
 module.exports = {
     sequelize,
     User,
@@ -73,5 +76,6 @@ module.exports = {
     Option,
     EvaluationAttempt,
     UserCourse,
+    Foro,
     Certificate
 };

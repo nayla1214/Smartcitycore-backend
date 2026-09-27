@@ -17,7 +17,7 @@ app.use('/api/modules', require('./routes/moduleRoutes'));
 app.use('/api/videos', require('./routes/videoRoutes'));
 app.use('/api/evaluations', require('./routes/evaluationRoutes'));
 app.use('/api/certificates', require('./routes/certificateRoutes'));
-
+app.use('/api/foro', require('./routes/foroRoutes'));
 app.get('/api/health', (req, res) => {
     res.json({ status: 'OK', message: 'API is running smoothly' });
 });

@@ -1,153 +1,346 @@
-const { Evaluation, Question, Option, EvaluationAttempt, Video, VideoProgress, Module, UserCourse, Certificate } = require('../models');
+const {
+  Evaluation,
+  Question,
+  Option,
+  EvaluationAttempt,
+  UserCourse,
+  Certificate,
+} = require('../models');
 
-// @desc    Create Evaluation (Admin)
-// @route   POST /api/evaluations
-// @access  Private/Admin
+// POST /api/evaluations — Solo ADMIN
 const createEvaluation = async (req, res) => {
-    try {
-        const { moduleId, courseId, title, is_final, questions } = req.body;
-        
-        const evaluation = await Evaluation.create({
-            moduleId,
-            courseId,
-            title,
-            is_final
+  try {
+    const {
+      moduleId,
+      courseId,
+      title,
+      is_final,
+      questions,
+    } = req.body;
+
+    const evaluation = await Evaluation.create({
+      moduleId,
+      courseId,
+      title,
+      is_final,
+    });
+
+    if (Array.isArray(questions)) {
+      for (const item of questions) {
+        const question = await Question.create({
+          evaluationId: evaluation.id,
+          text: item.text,
+          score: item.score ?? 1,
         });
 
-        if (questions && questions.length > 0) {
-            for (const q of questions) {
-                const question = await Question.create({
-                    evaluationId: evaluation.id,
-                    text: q.text,
-                    score: q.score || 1
-                });
-                if (q.options && q.options.length > 0) {
-                    for (const opt of q.options) {
-                        await Option.create({
-                            questionId: question.id,
-                            text: opt.text,
-                            is_correct: opt.is_correct
-                        });
-                    }
-                }
-            }
+        if (Array.isArray(item.options)) {
+          for (const option of item.options) {
+            await Option.create({
+              questionId: question.id,
+              text: option.text,
+              is_correct: Boolean(option.is_correct),
+            });
+          }
         }
-
-        res.status(201).json(evaluation);
-    } catch (error) {
-        console.error(error);
-        res.status(500).json({ message: 'Server Error' });
+      }
     }
+
+    return res.status(201).json(evaluation);
+  } catch (error) {
+    console.error('Error al crear evaluación:', error);
+
+    return res.status(500).json({
+      message: 'Error al crear la evaluación.',
+    });
+  }
 };
 
-// @desc    Get Evaluation with Questions
-// @route   GET /api/evaluations/:id
-// @access  Private
+// GET /api/evaluations/:id — Preguntas sin respuestas correctas
 const getEvaluation = async (req, res) => {
-    try {
-        const evaluation = await Evaluation.findByPk(req.params.id, {
-            include: [{
-                model: Question,
-                include: [{ model: Option, attributes: ['id', 'text'] }]
-            }]
-        });
+  try {
+    const evaluationId = Number(req.params.id);
 
-        if (!evaluation) {
-            // Frontend will use hardcoded evaluation if 404
-            return res.status(404).json({ message: 'Evaluation not found in DB' });
-        }
-
-        res.status(200).json(evaluation);
-    } catch (error) {
-        console.error(error);
-        res.status(500).json({ message: 'Server Error' });
+    if (!Number.isInteger(evaluationId) || evaluationId < 1) {
+      return res.status(400).json({
+        message: 'Identificador de evaluación inválido.',
+      });
     }
+
+    const evaluation = await Evaluation.findByPk(evaluationId, {
+      include: [
+        {
+          model: Question,
+          include: [
+            {
+              model: Option,
+              attributes: ['id', 'text'],
+            },
+          ],
+        },
+      ],
+    });
+
+    if (!evaluation) {
+      return res.status(404).json({
+        message: 'Evaluación no encontrada.',
+      });
+    }
+
+    return res.status(200).json(evaluation);
+  } catch (error) {
+    console.error('Error al cargar evaluación:', error);
+
+    return res.status(500).json({
+      message: 'No se pudo cargar la evaluación.',
+    });
+  }
 };
 
-// @desc    Submit Evaluation
-// @route   POST /api/evaluations/:id/submit
-// @access  Private
+// GET /api/evaluations/:id/progress
+const getEvaluationProgress = async (req, res) => {
+  try {
+    const evaluationId = Number(req.params.id);
+
+    if (!Number.isInteger(evaluationId) || evaluationId < 1) {
+      return res.status(400).json({
+        message: 'Identificador de evaluación inválido.',
+      });
+    }
+
+    const evaluation = await Evaluation.findByPk(evaluationId);
+
+    if (!evaluation) {
+      return res.status(404).json({
+        message: 'Evaluación no encontrada.',
+      });
+    }
+
+    const passedAttempt = await EvaluationAttempt.findOne({
+      where: {
+        userId: req.user.id,
+        evaluationId,
+        passed: true,
+      },
+      order: [['attempted_at', 'DESC']],
+    });
+
+    return res.status(200).json({
+      passed: Boolean(passedAttempt),
+      percentage: passedAttempt?.score ?? null,
+    });
+  } catch (error) {
+    console.error(
+      'Error al consultar progreso de evaluación:',
+      error
+    );
+
+    return res.status(500).json({
+      message: 'No se pudo consultar el progreso de la evaluación.',
+    });
+  }
+};
+
+// POST /api/evaluations/:id/submit
 const submitEvaluation = async (req, res) => {
-    try {
-        const { answers, percentage: scoreFromFrontend, is_final, courseId } = req.body;
-        const evaluationId = parseInt(req.params.id);
-        const evaluation = await Evaluation.findByPk(evaluationId, {
-            include: [{ model: Question, include: [Option] }]
+  try {
+    const evaluationId = Number(req.params.id);
+    const { answers } = req.body;
+
+    if (!Number.isInteger(evaluationId) || evaluationId < 1) {
+      return res.status(400).json({
+        message: 'Identificador de evaluación inválido.',
+      });
+    }
+
+    if (!Array.isArray(answers)) {
+      return res.status(400).json({
+        message: 'Debes enviar tus respuestas.',
+      });
+    }
+
+    const evaluation = await Evaluation.findByPk(evaluationId, {
+      include: [
+        {
+          model: Question,
+          include: [Option],
+        },
+      ],
+    });
+
+    if (!evaluation) {
+      return res.status(404).json({
+        message: 'Evaluación no encontrada.',
+      });
+    }
+
+    const questions = evaluation.Questions || [];
+
+    if (questions.length === 0) {
+      return res.status(400).json({
+        message: 'Esta evaluación todavía no tiene preguntas.',
+      });
+    }
+
+    if (answers.length !== questions.length) {
+      return res.status(400).json({
+        message: 'Debes responder todas las preguntas.',
+      });
+    }
+
+    const selectedAnswers = new Map();
+
+    for (const answer of answers) {
+      const questionId = Number(answer.questionId);
+      const optionId = Number(answer.optionId);
+
+      if (
+        !Number.isInteger(questionId) ||
+        !Number.isInteger(optionId) ||
+        selectedAnswers.has(questionId)
+      ) {
+        return res.status(400).json({
+          message: 'Las respuestas enviadas no son válidas.',
+        });
+      }
+
+      selectedAnswers.set(questionId, optionId);
+    }
+
+    let earnedScore = 0;
+    let maximumScore = 0;
+
+    // Se devuelve únicamente después de calificar.
+    const review = [];
+
+    for (const question of questions) {
+      const weight = Number(question.score) || 1;
+      maximumScore += weight;
+
+      const optionId = selectedAnswers.get(question.id);
+
+      if (!optionId) {
+        return res.status(400).json({
+          message: 'Debes responder todas las preguntas.',
+        });
+      }
+
+      const options = question.Options || [];
+
+      const selectedOption = options.find(
+        (option) => option.id === optionId
+      );
+
+      if (!selectedOption) {
+        return res.status(400).json({
+          message: 'Una respuesta no corresponde a esta evaluación.',
+        });
+      }
+
+      const correctOption = options.find(
+        (option) => option.is_correct === true
+      );
+
+      if (!correctOption) {
+        console.error(
+          `La pregunta ${question.id} no tiene respuesta correcta.`
+        );
+
+        return res.status(500).json({
+          message: 'La evaluación tiene una pregunta mal configurada.',
+        });
+      }
+
+      const correct = selectedOption.is_correct === true;
+
+      if (correct) {
+        earnedScore += weight;
+      }
+
+      review.push({
+        questionId: question.id,
+        question: question.text,
+        correct,
+        selectedAnswer: selectedOption.text,
+        correctAnswer: correctOption.text,
+        pointsEarned: correct ? weight : 0,
+        pointsPossible: weight,
+      });
+    }
+
+    const percentage = (earnedScore / maximumScore) * 100;
+    const passed = percentage >= 70;
+
+    const attempt = await EvaluationAttempt.create({
+      userId: req.user.id,
+      evaluationId: evaluation.id,
+      score: percentage,
+      passed,
+    });
+
+    if (passed) {
+      const courseId = evaluation.courseId;
+
+      if (evaluation.is_final) {
+        const [userCourse] = await UserCourse.findOrCreate({
+          where: {
+            userId: req.user.id,
+            courseId,
+          },
+          defaults: {
+            userId: req.user.id,
+            courseId,
+          },
         });
 
-        let percentage = typeof scoreFromFrontend === 'number' ? scoreFromFrontend : 0;
-        let passed = false;
+        await userCourse.update({
+          is_completed: true,
+          final_score: percentage,
+        });
 
-        if (typeof scoreFromFrontend !== 'number' && evaluation && evaluation.Questions && evaluation.Questions.length > 0) {
-            let totalScore = 0;
-            let maxScore = 0;
-
-            evaluation.Questions.forEach(q => {
-                maxScore += q.score || 1;
-                const answer = answers?.find(a => a.questionId === q.id);
-                if (answer) {
-                    const selectedOption = q.Options.find(o => o.id === answer.optionId);
-                    if (selectedOption && selectedOption.is_correct) {
-                        totalScore += q.score || 1;
-                    }
-                }
-            });
-
-            percentage = maxScore > 0 ? (totalScore / maxScore) * 100 : 0;
-        }
-
-        passed = percentage >= 70;
-
-        let attempt = null;
-        try {
-            attempt = await EvaluationAttempt.create({
-                userId: req.user.id,
-                evaluationId,
-                score: percentage,
-                passed
-            });
-        } catch (dbErr) {
-            console.warn('EvaluationAttempt DB insert skipped:', dbErr.message);
-            attempt = { userId: req.user.id, evaluationId, score: percentage, passed };
-        }
-
-        if (passed) {
-            const targetCourseId = courseId || evaluation?.courseId || 1;
-            if (is_final || evaluation?.is_final) {
-                // Generar certificado si no existe ya uno
-                const existingCert = await Certificate.findOne({
-                    where: { userId: req.user.id, courseId: targetCourseId }
-                });
-                if (!existingCert) {
-                    await Certificate.create({
-                        userId: req.user.id,
-                        courseId: targetCourseId
-                    });
-                }
-                
-                let uc = await UserCourse.findOne({ where: { userId: req.user.id, courseId: targetCourseId } });
-                if (uc) {
-                    await uc.update({ is_completed: true, final_score: percentage });
-                } else {
-                    await UserCourse.create({ userId: req.user.id, courseId: targetCourseId, is_completed: true, final_score: percentage });
-                }
-            } else {
-                let uc = await UserCourse.findOne({ where: { userId: req.user.id, courseId: targetCourseId } });
-                if (!uc) {
-                    await UserCourse.create({ userId: req.user.id, courseId: targetCourseId });
-                }
-            }
-        }
-
-        res.status(200).json({ attempt, percentage, passed });
-    } catch (error) {
-        console.error('Error submitting evaluation:', error);
-        res.status(500).json({ message: 'Server Error' });
+        await Certificate.findOrCreate({
+          where: {
+            userId: req.user.id,
+            courseId,
+          },
+          defaults: {
+            userId: req.user.id,
+            courseId,
+          },
+        });
+      } else {
+        await UserCourse.findOrCreate({
+          where: {
+            userId: req.user.id,
+            courseId,
+          },
+          defaults: {
+            userId: req.user.id,
+            courseId,
+          },
+        });
+      }
     }
+
+    return res.status(200).json({
+      attempt,
+      percentage,
+      passed,
+      earnedScore,
+      maximumScore,
+      review,
+    });
+  } catch (error) {
+    console.error('Error al enviar evaluación:', error);
+
+    return res.status(500).json({
+      message: 'No se pudieron guardar los resultados. Intenta nuevamente.',
+    });
+  }
 };
 
 module.exports = {
-    createEvaluation,
-    getEvaluation,
-    submitEvaluation
+  createEvaluation,
+  getEvaluation,
+  getEvaluationProgress,
+  submitEvaluation,
 };

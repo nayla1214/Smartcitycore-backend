@@ -41,16 +41,26 @@ const getVideosByModule = async (req, res) => {
 // @access  Private
 const updateProgress = async (req, res) => {
     try {
-        const { videoId, current_time, duration: durationFromBody, isEnded } = req.body;
+        const videoId = Number(req.body.videoId);
+        const currentTime = Number(req.body.current_time);
+        const duration = Number(req.body.duration);
+        const isEnded = req.body.isEnded === true;
         const userId = req.user.id;
 
-        // Preferir la duración real que envía el cliente desde YouTube
-        let duration = durationFromBody && durationFromBody > 0 ? durationFromBody : 300;
-        if (!durationFromBody || durationFromBody <= 0) {
-            const video = await Video.findByPk(videoId);
-            if (video && video.duration && video.duration > 0) {
-                duration = video.duration;
-            }
+        if (
+            !Number.isInteger(videoId) ||
+            !Number.isFinite(currentTime) ||
+            !Number.isFinite(duration) ||
+            currentTime < 0 ||
+            duration <= 0 ||
+            currentTime > duration + 2
+        ) {
+            return res.status(400).json({ message: 'Datos del video no válidos.' });
+        }
+
+        const video = await Video.findByPk(videoId);
+        if (!video) {
+            return res.status(404).json({ message: 'Video no encontrado.' });
         }
 
         let progress = await VideoProgress.findOne({
@@ -67,45 +77,51 @@ const updateProgress = async (req, res) => {
             });
         }
 
-        // Si ya está completado en la BD, devolver siempre 100% y completado
         if (progress.is_completed) {
-            return res.status(200).json({
-                ...progress.toJSON(),
-                percentage: 100,
-                is_completed: true
-            });
+            return res.status(200).json(progress);
         }
 
-        let new_time = Math.max(current_time || 0, progress.time_watched || 0);
+        const previousPosition = Number(progress.time_watched) || 0;
+        const elapsedSeconds = Math.max(
+            0,
+            (Date.now() - new Date(progress.updatedAt).getTime()) / 1000
+        );
 
-        let percentage = (new_time / duration) * 100;
-        if (isNaN(percentage) || !isFinite(percentage)) percentage = 0;
+        // Se admite un pequeño margen por retrasos de red y por el intervalo
+        // de 3 segundos entre envíos del reproductor.
+        const allowedAdvance = elapsedSeconds + 2;
+        const advance = currentTime - previousPosition;
 
-        let is_completed = false;
-        let completed_at = null;
-
-        // Considerar completado si llega al 80% o si terminó el video
-        if (percentage >= 80 || isEnded) {
-            is_completed = true;
-            completed_at = new Date();
-            percentage = 100;
-            new_time = duration;
+        if (advance > allowedAdvance) {
+            return res.status(200).json(progress);
         }
+
+        // Volver atrás en el video no borra lo ya visto.
+        const verifiedPosition = Math.max(previousPosition, currentTime);
+        const reachedEnd = currentTime >= duration - 2;
+
+        const isCompleted =
+            isEnded &&
+            reachedEnd &&
+            verifiedPosition >= duration - 2;
 
         await progress.update({
-            time_watched: new_time,
-            percentage: percentage > 100 ? 100 : percentage,
-            is_completed,
-            completed_at
+            time_watched: isCompleted
+                ? Math.ceil(duration)
+                : Math.floor(verifiedPosition),
+            percentage: isCompleted
+                ? 100
+                : Math.min(99, (verifiedPosition / duration) * 100),
+            is_completed: isCompleted,
+            completed_at: isCompleted ? new Date() : null
         });
 
-        res.status(200).json(progress);
+        return res.status(200).json(progress);
     } catch (error) {
         console.error('Error in updateProgress:', error);
-        res.status(500).json({ message: 'Server Error' });
+        return res.status(500).json({ message: 'Server Error' });
     }
 };
-
 // @desc    Get user progress for a video
 // @route   GET /api/videos/:videoId/progress
 // @access  Private

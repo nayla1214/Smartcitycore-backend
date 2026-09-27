@@ -22,21 +22,6 @@ async function seedAll() {
         });
         console.log('✓ Admin user created.');
 
-        // 2. GADs
-        const gads = [
-            { name: 'Paján', description: 'Información del GAD de Paján', institutional_info: 'Misión y Visión de Paján' },
-            { name: 'Puerto López', description: 'Información del GAD de Puerto López', institutional_info: 'Misión y Visión de Puerto López' },
-            { name: 'Jipijapa', description: 'Información del GAD de Jipijapa', institutional_info: 'Misión y Visión de Jipijapa' }
-        ];
-
-        for (const gad of gads) {
-            await Gad.findOrCreate({
-                where: { name: gad.name },
-                defaults: gad
-            });
-        }
-        console.log('✓ GADs created.');
-
         // 3. Curso 1
         let course = await Course.findByPk(1);
         if (!course) {
@@ -67,12 +52,12 @@ async function seedAll() {
                 moduleId: mod1.id,
                 title: 'Video 1: ¿Qué es una Ciudad Inteligente?',
                 description: 'Visión general del concepto de ciudad inteligente y sus componentes principales.',
-                url: 'M7lc1UVf-VE',
-                duration: 180,
+                url:'2HS6SITpfOY',
+                duration: 426,
                 order_number: 1
             });
         } else {
-            await vid1.update({ url: 'M7lc1UVf-VE', duration: 180 });
+            await vid1.update({ url: '2HS6SITpFOY', duration: 426 });
         }
 
         let eval1 = await Evaluation.findByPk(1);
