@@ -64,18 +64,20 @@ const updateProgress = async (req, res) => {
         }
 
         let progress = await VideoProgress.findOne({
-            where: { userId, videoId }
-        });
+    where: { userId, videoId }
+});
 
-        if (!progress) {
-            progress = await VideoProgress.create({
-                userId,
-                videoId,
-                time_watched: 0,
-                percentage: 0,
-                is_completed: false
-            });
-        }
+const isFirstPing = !progress;
+
+if (isFirstPing) {
+    progress = await VideoProgress.create({
+        userId,
+        videoId,
+        time_watched: 0,
+        percentage: 0,
+        is_completed: false
+    });
+}
 
         if (progress.is_completed) {
             return res.status(200).json(progress);
@@ -87,9 +89,12 @@ const updateProgress = async (req, res) => {
             (Date.now() - new Date(progress.updatedAt).getTime()) / 1000
         );
 
-        // Se admite un pequeño margen por retrasos de red y por el intervalo
-        // de 3 segundos entre envíos del reproductor.
-        const allowedAdvance = elapsedSeconds + 2;
+    // El reproductor envía el primer avance a los 3 segundos.
+// Limitamos también el tiempo acumulado para que dejar la
+// página pausada no permita saltar hasta el final.
+const allowedAdvance = isFirstPing
+    ? 5
+    : Math.min(elapsedSeconds, 6) + 2;
         const advance = currentTime - previousPosition;
 
         if (advance > allowedAdvance) {

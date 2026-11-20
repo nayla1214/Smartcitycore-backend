@@ -99,32 +99,95 @@ const getCourseProgress = async (req, res) => {
 
         const modules = await Module.findAll({
             where: { courseId },
-            order: [['order_number', 'ASC']]
+            order: [['order_number', 'ASC']],
         });
 
-        // Para cada módulo, verificar si el usuario aprobó su evaluación
+        const topicCountByModule = {
+            1: 4,
+            2: 3,
+            3: 3,
+        };
+
         const progressData = [];
+
         for (const mod of modules) {
-            const evaluation = await Evaluation.findOne({ where: { moduleId: mod.id, is_final: false } });
-            let passed = false;
-            if (evaluation) {
-                const attempt = await EvaluationAttempt.findOne({
-                    where: { userId, evaluationId: evaluation.id, passed: true }
+            const moduleNumber = Number(mod.order_number);
+            const topicCount = topicCountByModule[moduleNumber] || 0;
+
+            const evaluations = await Evaluation.findAll({
+                where: {
+                    moduleId: mod.id,
+                    is_final: false,
+                },
+            });
+
+            const topics = [];
+
+            for (let topicIndex = 1; topicIndex <= topicCount; topicIndex += 1) {
+                const topicNumber = `${moduleNumber}.${topicIndex}`;
+
+                // El título debe contener "Tema 1.1", "Tema 1.2", etc.
+                const evaluation = evaluations.find((item) =>
+                    new RegExp(
+                        `\\btema\\s+${moduleNumber}\\.${topicIndex}\\b`,
+                        'i'
+                    ).test(item.title || '')
+                );
+
+                if (!evaluation) {
+                    topics.push({
+                        topicNumber,
+                        evaluationId: null,
+                        passed: false,
+                        percentage: null,
+                    });
+                    continue;
+                }
+
+                const attempts = await EvaluationAttempt.findAll({
+                    where: {
+                        userId,
+                        evaluationId: evaluation.id,
+                    },
+                    order: [['attempted_at', 'DESC']],
                 });
-                passed = !!attempt;
+
+                const passed = attempts.some(
+                    (attempt) => Number(attempt.score) >= 70
+                );
+
+                topics.push({
+                    topicNumber,
+                    evaluationId: evaluation.id,
+                    passed,
+                    percentage: attempts.length
+                        ? Number(attempts[0].score)
+                        : null,
+                });
             }
-            progressData.push({ moduleId: mod.id, order_number: mod.order_number, passed });
+
+            progressData.push({
+                moduleId: mod.id,
+                order_number: moduleNumber,
+                passed: topicCount > 0 && topics.every((topic) => topic.passed),
+                topics,
+            });
         }
 
-        // Buscar UserCourse para saber si el curso está completado
-        const userCourse = await UserCourse.findOne({ where: { userId, courseId } });
-        const isCompleted = userCourse?.is_completed || false;
-        const finalScore = userCourse?.final_score || null;
+        const userCourse = await UserCourse.findOne({
+            where: { userId, courseId },
+        });
 
-        res.status(200).json({ modules: progressData, isCompleted, finalScore });
+        return res.status(200).json({
+            modules: progressData,
+            isCompleted: userCourse?.is_completed === true,
+            finalScore: userCourse?.final_score ?? null,
+        });
     } catch (error) {
-        console.error(error);
-        res.status(500).json({ message: 'Server Error' });
+        console.error('Error al consultar progreso del curso:', error);
+        return res.status(500).json({
+            message: 'No se pudo consultar el progreso del curso.',
+        });
     }
 };
 
