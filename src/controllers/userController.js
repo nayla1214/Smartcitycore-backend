@@ -1,5 +1,17 @@
 const { Op } = require('sequelize');
 
+const ReadingProgress = require(
+  '../models/ReadingProgress'
+);
+
+const readingCatalog = require(
+  '../data/readingCatalog.json'
+);
+
+const {
+  buildModuleProgress,
+} = require('../services/moduleProgress');
+
 const {
   User,
   UserCourse,
@@ -11,9 +23,7 @@ const {
   EvaluationAttempt,
 } = require('../models');
 
-// @desc    Get all users
-// @route   GET /api/users
-// @access  Private/Admin
+// Consultar todos los usuarios.
 const getUsers = async (req, res) => {
   try {
     const users = await User.findAll({
@@ -22,19 +32,17 @@ const getUsers = async (req, res) => {
       },
     });
 
-    res.status(200).json(users);
+    return res.status(200).json(users);
   } catch (error) {
     console.error(error);
 
-    res.status(500).json({
+    return res.status(500).json({
       message: 'Error al consultar los usuarios',
     });
   }
 };
 
-// @desc    Update authenticated user profile
-// @route   PUT /api/users/me
-// @access  Private
+// Actualizar el perfil del usuario autenticado.
 const updateProfile = async (req, res) => {
   try {
     const name =
@@ -53,7 +61,8 @@ const updateProfile = async (req, res) => {
       });
     }
 
-    const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    const emailPattern =
+      /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
     if (!emailPattern.test(email)) {
       return res.status(400).json({
@@ -76,7 +85,9 @@ const updateProfile = async (req, res) => {
       });
     }
 
-    const user = await User.findByPk(req.user.id);
+    const user = await User.findByPk(
+      req.user.id
+    );
 
     if (!user) {
       return res.status(404).json({
@@ -99,9 +110,15 @@ const updateProfile = async (req, res) => {
       updatedAt: user.updatedAt,
     });
   } catch (error) {
-    console.error('Error al actualizar el perfil:', error);
+    console.error(
+      'Error al actualizar el perfil:',
+      error
+    );
 
-    if (error.name === 'SequelizeUniqueConstraintError') {
+    if (
+      error.name ===
+      'SequelizeUniqueConstraintError'
+    ) {
       return res.status(400).json({
         message: 'Este correo electrónico ya está registrado',
       });
@@ -113,12 +130,12 @@ const updateProfile = async (req, res) => {
   }
 };
 
-// @desc    Update user status
-// @route   PUT /api/users/:id/status
-// @access  Private/Admin
+// Actualizar el estado de un usuario.
 const updateUserStatus = async (req, res) => {
   try {
-    const user = await User.findByPk(req.params.id);
+    const user = await User.findByPk(
+      req.params.id
+    );
 
     if (!user) {
       return res.status(404).json({
@@ -127,9 +144,10 @@ const updateUserStatus = async (req, res) => {
     }
 
     user.status = req.body.status;
+
     await user.save();
 
-    res.status(200).json({
+    return res.status(200).json({
       message: 'Estado del usuario actualizado',
       user: {
         id: user.id,
@@ -139,28 +157,29 @@ const updateUserStatus = async (req, res) => {
   } catch (error) {
     console.error(error);
 
-    res.status(500).json({
+    return res.status(500).json({
       message: 'Error al actualizar el usuario',
     });
   }
 };
 
-// @desc    Get specific user with courses
-// @route   GET /api/users/:id
-// @access  Private/Admin
+// Consultar un usuario con sus cursos.
 const getUserById = async (req, res) => {
   try {
-    const user = await User.findByPk(req.params.id, {
-      attributes: {
-        exclude: ['password'],
-      },
-      include: [
-        {
-          model: UserCourse,
-          include: [Course],
+    const user = await User.findByPk(
+      req.params.id,
+      {
+        attributes: {
+          exclude: ['password'],
         },
-      ],
-    });
+        include: [
+          {
+            model: UserCourse,
+            include: [Course],
+          },
+        ],
+      }
+    );
 
     if (!user) {
       return res.status(404).json({
@@ -168,244 +187,420 @@ const getUserById = async (req, res) => {
       });
     }
 
-    res.status(200).json(user);
+    return res.status(200).json(user);
   } catch (error) {
     console.error(error);
 
-    res.status(500).json({
+    return res.status(500).json({
       message: 'Error al consultar el usuario',
     });
   }
 };
-// @desc    Get authenticated participant progress
-// @route   GET /api/users/me/progress
-// @access  Private
+
+// Consultar el avance del usuario autenticado.
 const getMyProgress = async (req, res) => {
   try {
     const userId = req.user.id;
+    const isAdmin = req.user.role === 'ADMIN';
 
-    const [userCourses, videoProgress, evaluationAttempts] =
-      await Promise.all([
-        UserCourse.findAll({
-          where: {
-            userId,
+    const [
+      userCourses,
+      videoProgress,
+      evaluationAttempts,
+    ] = await Promise.all([
+      UserCourse.findAll({
+        where: {
+          userId,
+        },
+        include: [
+          {
+            model: Course,
+            attributes: [
+              'id',
+              'name',
+              'description',
+              'image_url',
+            ],
+            include: [
+              {
+                model: Module,
+                attributes: [
+                  'id',
+                  'title',
+                  'order_number',
+                ],
+                include: [
+                  {
+                    model: Video,
+                    attributes: [
+                      'id',
+                      'title',
+                      'duration',
+                    ],
+                  },
+                ],
+              },
+            ],
           },
-          include: [
-            {
-              model: Course,
-              attributes: [
-                'id',
-                'name',
-                'description',
-                'image_url',
-              ],
-              include: [
-                {
-                  model: Module,
-                  attributes: [
-                    'id',
-                    'title',
-                    'order_number',
-                  ],
-                  include: [
-                    {
-                      model: Video,
-                      attributes: [
-                        'id',
-                        'title',
-                        'duration',
-                      ],
-                    },
-                  ],
-                },
-              ],
-            },
-          ],
-          order: [['updatedAt', 'DESC']],
-        }),
+        ],
+        order: [['updatedAt', 'DESC']],
+      }),
 
-        VideoProgress.findAll({
-          where: {
-            userId,
+      VideoProgress.findAll({
+        where: {
+          userId,
+        },
+        include: [
+          {
+            model: Video,
+            attributes: [
+              'id',
+              'title',
+              'moduleId',
+            ],
+            include: [
+              {
+                model: Module,
+                attributes: [
+                  'id',
+                  'title',
+                  'courseId',
+                ],
+                include: [
+                  {
+                    model: Course,
+                    attributes: [
+                      'id',
+                      'name',
+                    ],
+                  },
+                ],
+              },
+            ],
           },
-          include: [
-            {
-              model: Video,
-              attributes: [
-                'id',
-                'title',
-                'moduleId',
-              ],
-              include: [
-                {
-                  model: Module,
-                  attributes: [
-                    'id',
-                    'title',
-                    'courseId',
-                  ],
-                  include: [
-                    {
-                      model: Course,
-                      attributes: ['id', 'name'],
-                    },
-                  ],
-                },
-              ],
-            },
-          ],
-          order: [['updatedAt', 'DESC']],
-        }),
+        ],
+        order: [['updatedAt', 'DESC']],
+      }),
 
-        EvaluationAttempt.findAll({
-          where: {
-            userId,
+      EvaluationAttempt.findAll({
+        where: {
+          userId,
+        },
+        include: [
+          {
+            model: Evaluation,
+            attributes: [
+              'id',
+              'title',
+              'moduleId',
+              'courseId',
+              'is_final',
+            ],
+            include: [
+              {
+                model: Course,
+                attributes: [
+                  'id',
+                  'name',
+                ],
+              },
+            ],
           },
-          include: [
-            {
-              model: Evaluation,
-              attributes: [
-                'id',
-                'title',
-                'moduleId',
-                'courseId',
-                'is_final',
-              ],
-              include: [
-                {
-                  model: Course,
-                  attributes: ['id', 'name'],
-                },
-              ],
-            },
-          ],
-          order: [['attempted_at', 'DESC']],
-        }),
-      ]);
+        ],
+        order: [['attempted_at', 'DESC']],
+      }),
+    ]);
+
+    const [
+      allEvaluations,
+      readings,
+    ] = await Promise.all([
+      Evaluation.findAll({
+        attributes: [
+          'id',
+          'title',
+          'moduleId',
+          'courseId',
+          'is_final',
+        ],
+      }),
+
+      ReadingProgress.findAll({
+        where: {
+          userId,
+        },
+        raw: true,
+      }),
+    ]);
 
     const progressByVideo = new Map();
 
     videoProgress.forEach((progress) => {
-      progressByVideo.set(progress.videoId, progress);
+      progressByVideo.set(
+        progress.videoId,
+        progress
+      );
     });
 
     let totalModules = 0;
     let completedModules = 0;
 
-    const courses = userCourses.map((userCourse) => {
-      const course = userCourse.Course;
-      const modules = course?.Modules || [];
+    const courses = userCourses.map(
+      (userCourse) => {
+        const course = userCourse.Course;
+        const modules = course?.Modules || [];
 
-      totalModules += modules.length;
+        totalModules += modules.length;
 
-      const courseVideos = modules.flatMap(
-        (module) => module.Videos || [],
-      );
+        const courseVideos = modules.flatMap(
+          (module) => module.Videos || []
+        );
 
-      const completedVideos = courseVideos.filter((video) => {
-        const progress = progressByVideo.get(video.id);
-
-        return progress?.is_completed;
-      }).length;
-
-      const accumulatedVideoProgress = courseVideos.reduce(
-        (total, video) => {
-          const progress = progressByVideo.get(video.id);
-
-          return total + Number(progress?.percentage || 0);
-        },
-        0,
-      );
-
-      const videoPercentage =
-        courseVideos.length > 0
-          ? Math.round(
-              accumulatedVideoProgress /
-                courseVideos.length,
-            )
-          : 0;
-
-      const completedCourseModules = modules.filter(
-        (module) => {
-          const moduleVideos = module.Videos || [];
-
-          if (moduleVideos.length === 0) {
-            return false;
-          }
-
-          return moduleVideos.every((video) => {
-            const progress = progressByVideo.get(video.id);
+        const completedVideos =
+          courseVideos.filter((video) => {
+            const progress =
+              progressByVideo.get(video.id);
 
             return progress?.is_completed;
-          });
-        },
-      ).length;
+          }).length;
 
-      completedModules += completedCourseModules;
+        const accumulatedVideoProgress =
+          courseVideos.reduce(
+            (total, video) => {
+              const progress =
+                progressByVideo.get(video.id);
 
-      const courseProgress = userCourse.is_completed
-        ? 100
-        : Math.min(videoPercentage, 100);
+              return (
+                total +
+                Number(
+                  progress?.percentage || 0
+                )
+              );
+            },
+            0
+          );
 
-      return {
-        id: course.id,
-        name: course.name,
-        description: course.description,
-        imageUrl: course.image_url,
-        progress: courseProgress,
-        currentModuleId: userCourse.current_module_id,
-        isCompleted: userCourse.is_completed,
-        finalScore: userCourse.final_score,
-        totalModules: modules.length,
-        completedModules: completedCourseModules,
-        totalVideos: courseVideos.length,
-        completedVideos,
-        startedAt: userCourse.createdAt,
-        lastActivity: userCourse.updatedAt,
-      };
-    });
+        const videoPercentage =
+          courseVideos.length > 0
+            ? Math.round(
+                accumulatedVideoProgress /
+                  courseVideos.length
+              )
+            : 0;
 
-    const coursesStarted = userCourses.length;
+        const completedVideoModules =
+          modules.filter((module) => {
+            const moduleVideos =
+              module.Videos || [];
 
-    const coursesCompleted = userCourses.filter(
-      (course) => course.is_completed,
-    ).length;
+            if (moduleVideos.length === 0) {
+              return false;
+            }
 
-    const videosStarted = videoProgress.length;
+            return moduleVideos.every(
+              (video) => {
+                const progress =
+                  progressByVideo.get(
+                    video.id
+                  );
 
-    const videosCompleted = videoProgress.filter(
-      (progress) => progress.is_completed,
-    ).length;
+                return progress?.is_completed;
+              }
+            );
+          }).length;
 
-    const totalWatchTime = videoProgress.reduce(
-      (total, progress) =>
-        total + Number(progress.time_watched || 0),
-      0,
+        const moduleDetails = modules
+          .map((module) =>
+            buildModuleProgress({
+              module,
+              courseId: course.id,
+              evaluationAttempts,
+              allEvaluations,
+              videoProgress,
+              readings,
+              readingCatalog,
+            })
+          )
+          .sort(
+            (first, second) =>
+              first.order - second.order
+          );
+
+        // El contador muestra módulos aprobados
+        // por sus evaluaciones e integradora.
+        // Las lecturas pendientes siguen influyendo
+        // en el porcentaje de avance.
+        const approvedCourseModules =
+          Number(course.id) === 1
+            ? moduleDetails.filter(
+                (module) =>
+                  module.supported &&
+                  module.evaluations.length > 0 &&
+                  module.evaluations.every(
+                    (evaluation) =>
+                      evaluation.passed
+                  ) &&
+                  module.integrative.passed
+              ).length
+            : completedVideoModules;
+
+        completedModules +=
+          approvedCourseModules;
+
+        const courseProgress =
+          userCourse.is_completed
+            ? 100
+            : Math.min(
+                videoPercentage,
+                100
+              );
+
+        const detailedCourseProgress =
+          Number(course.id) === 1 &&
+          moduleDetails.length > 0
+            ? Math.floor(
+                moduleDetails.reduce(
+                  (total, module) =>
+                    total + module.progress,
+                  0
+                ) / moduleDetails.length
+              )
+            : courseProgress;
+
+        // Solo los administradores reciben
+        // los contadores de intentos por módulo.
+        const visibleModules = isAdmin
+          ? moduleDetails
+          : moduleDetails.map((detail) => {
+              const {
+                evaluationAttempts,
+                ...publicDetail
+              } = detail;
+
+              const publicEvaluations =
+                detail.evaluations.map(
+                  (evaluation) => {
+                    const {
+                      attempts,
+                      ...publicEvaluation
+                    } = evaluation;
+
+                    return publicEvaluation;
+                  }
+                );
+
+              const {
+                attempts,
+                ...publicIntegrative
+              } = detail.integrative;
+
+              return {
+                ...publicDetail,
+                evaluations:
+                  publicEvaluations,
+                integrative:
+                  publicIntegrative,
+              };
+            });
+
+        return {
+          id: course.id,
+          name: course.name,
+          description: course.description,
+          imageUrl: course.image_url,
+
+          progress:
+            detailedCourseProgress,
+
+          modules: visibleModules,
+
+          currentModuleId:
+            userCourse.current_module_id,
+
+          isCompleted:
+            userCourse.is_completed,
+
+          finalScore:
+            userCourse.final_score,
+
+          totalModules:
+            modules.length,
+
+          completedModules:
+            approvedCourseModules,
+
+          totalVideos:
+            courseVideos.length,
+
+          completedVideos,
+
+          startedAt:
+            userCourse.createdAt,
+
+          lastActivity:
+            userCourse.updatedAt,
+        };
+      }
     );
 
-    const evaluationsTaken = evaluationAttempts.length;
+    const coursesStarted =
+      userCourses.length;
 
-    const evaluationsPassed = evaluationAttempts.filter(
-      (attempt) => attempt.passed,
-    ).length;
+    const coursesCompleted =
+      userCourses.filter(
+        (course) => course.is_completed
+      ).length;
+
+    const videosStarted =
+      videoProgress.length;
+
+    const videosCompleted =
+      videoProgress.filter(
+        (progress) =>
+          progress.is_completed
+      ).length;
+
+    const totalWatchTime =
+      videoProgress.reduce(
+        (total, progress) =>
+          total +
+          Number(
+            progress.time_watched || 0
+          ),
+        0
+      );
+
+    const evaluationsTaken =
+      evaluationAttempts.length;
+
+    const evaluationsPassed =
+      evaluationAttempts.filter(
+        (attempt) => attempt.passed
+      ).length;
 
     const averageScore =
       evaluationsTaken > 0
         ? Math.round(
             evaluationAttempts.reduce(
               (total, attempt) =>
-                total + Number(attempt.score || 0),
-              0,
-            ) / evaluationsTaken,
+                total +
+                Number(
+                  attempt.score || 0
+                ),
+              0
+            ) / evaluationsTaken
           )
         : 0;
 
     const bestScore =
       evaluationsTaken > 0
         ? Math.max(
-            ...evaluationAttempts.map((attempt) =>
-              Number(attempt.score || 0),
-            ),
+            ...evaluationAttempts.map(
+              (attempt) =>
+                Number(
+                  attempt.score || 0
+                )
+            )
           )
         : 0;
 
@@ -415,54 +610,77 @@ const getMyProgress = async (req, res) => {
             courses.reduce(
               (total, course) =>
                 total + course.progress,
-              0,
-            ) / courses.length,
+              0
+            ) / courses.length
           )
         : 0;
 
-    const videoActivity = videoProgress.map((progress) => ({
-      type: progress.is_completed
-        ? 'video_completed'
-        : 'video_progress',
-      title: progress.Video?.title || 'Contenido en video',
-      course:
-        progress.Video?.Module?.Course?.name ||
-        'Curso',
-      detail: progress.is_completed
-        ? 'Video completado'
-        : `${Math.round(progress.percentage || 0)}% visualizado`,
-      date:
-        progress.completed_at ||
-        progress.updatedAt,
-    }));
+    const videoActivity =
+      videoProgress.map((progress) => ({
+        type:
+          progress.is_completed
+            ? 'video_completed'
+            : 'video_progress',
 
-    const evaluationActivity = evaluationAttempts.map(
-      (attempt) => ({
-        type: attempt.passed
-          ? 'evaluation_passed'
-          : 'evaluation_attempt',
         title:
-          attempt.Evaluation?.title ||
-          'Evaluación',
+          progress.Video?.title ||
+          'Contenido en video',
+
         course:
-          attempt.Evaluation?.Course?.name ||
+          progress.Video?.Module
+            ?.Course?.name ||
           'Curso',
-        detail: attempt.passed
-          ? `Aprobada con ${attempt.score} puntos`
-          : `Calificación: ${attempt.score} puntos`,
-        date: attempt.attempted_at,
-      }),
-    );
+
+        detail:
+          progress.is_completed
+            ? 'Video completado'
+            : `${Math.round(
+                progress.percentage || 0
+              )}% visualizado`,
+
+        date:
+          progress.completed_at ||
+          progress.updatedAt,
+      }));
+
+    const evaluationActivity =
+      evaluationAttempts.map(
+        (attempt) => ({
+          type:
+            attempt.passed
+              ? 'evaluation_passed'
+              : 'evaluation_attempt',
+
+          title:
+            attempt.Evaluation?.title ||
+            'Evaluación',
+
+          course:
+            attempt.Evaluation
+              ?.Course?.name ||
+            'Curso',
+
+          detail:
+            attempt.passed
+              ? `Aprobada con ${attempt.score} puntos`
+              : `Calificación: ${attempt.score} puntos`,
+
+          date:
+            attempt.attempted_at,
+        })
+      );
 
     const recentActivity = [
       ...videoActivity,
       ...evaluationActivity,
     ]
-      .filter((activity) => activity.date)
+      .filter(
+        (activity) => activity.date
+      )
       .sort(
         (first, second) =>
           new Date(second.date) -
-          new Date(first.date),
+          new Date(first.date)
       )
       .slice(0, 8);
 
@@ -481,13 +699,15 @@ const getMyProgress = async (req, res) => {
         averageScore,
         bestScore,
       },
+
       courses,
+
       recentActivity,
     });
   } catch (error) {
     console.error(
       'Error al consultar el avance:',
-      error,
+      error
     );
 
     return res.status(500).json({
@@ -496,6 +716,7 @@ const getMyProgress = async (req, res) => {
     });
   }
 };
+
 module.exports = {
   getUsers,
   updateProfile,

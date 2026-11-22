@@ -7,6 +7,7 @@ const Module = require('./Module');
 const Video = require('./Video');
 const VideoProgress = require('./VideoProgress');
 const Evaluation = require('./Evaluation');
+const EvaluationActivity = require('./EvaluationActivity');
 const Question = require('./Question');
 const Option = require('./Option');
 const EvaluationAttempt = require('./EvaluationAttempt');
@@ -23,19 +24,31 @@ Module.belongsTo(Course, { foreignKey: 'courseId' });
 Module.hasMany(Video, { foreignKey: 'moduleId' });
 Video.belongsTo(Module, { foreignKey: 'moduleId' });
 
-// Un módulo puede tener una evaluación por cada tema.
+// Evaluaciones de los temas y del módulo
 Module.hasMany(Evaluation, { foreignKey: 'moduleId' });
 Evaluation.belongsTo(Module, { foreignKey: 'moduleId' });
 
-// Un curso puede tener evaluaciones de temas y una evaluación final.
+// Evaluaciones asociadas al curso
 Course.hasMany(Evaluation, { foreignKey: 'courseId' });
 Evaluation.belongsTo(Course, { foreignKey: 'courseId' });
 
+// Preguntas de las evaluaciones actuales
 Evaluation.hasMany(Question, { foreignKey: 'evaluationId' });
 Question.belongsTo(Evaluation, { foreignKey: 'evaluationId' });
 
 Question.hasMany(Option, { foreignKey: 'questionId' });
 Option.belongsTo(Question, { foreignKey: 'questionId' });
+
+// Actividades de las evaluaciones mixtas
+Evaluation.hasMany(EvaluationActivity, {
+  foreignKey: 'evaluationId',
+  as: 'activities',
+});
+
+EvaluationActivity.belongsTo(Evaluation, {
+  foreignKey: 'evaluationId',
+  as: 'evaluation',
+});
 
 // Relaciones de progreso de usuario
 User.hasMany(VideoProgress, { foreignKey: 'userId' });
@@ -44,16 +57,19 @@ VideoProgress.belongsTo(User, { foreignKey: 'userId' });
 Video.hasMany(VideoProgress, { foreignKey: 'videoId' });
 VideoProgress.belongsTo(Video, { foreignKey: 'videoId' });
 
+// Intentos de evaluación
 User.hasMany(EvaluationAttempt, { foreignKey: 'userId' });
 EvaluationAttempt.belongsTo(User, { foreignKey: 'userId' });
 
 Evaluation.hasMany(EvaluationAttempt, {
   foreignKey: 'evaluationId',
 });
+
 EvaluationAttempt.belongsTo(Evaluation, {
   foreignKey: 'evaluationId',
 });
 
+// Inscripciones y progreso del curso
 User.hasMany(UserCourse, { foreignKey: 'userId' });
 UserCourse.belongsTo(User, { foreignKey: 'userId' });
 
@@ -87,6 +103,7 @@ module.exports = {
   Video,
   VideoProgress,
   Evaluation,
+  EvaluationActivity,
   Question,
   Option,
   EvaluationAttempt,
