@@ -190,12 +190,113 @@ const getCourseProgress = async (req, res) => {
         });
     }
 };
+// POST /api/courses/:id/delete
+// Exclusivo del administrador tutor.
+const deleteCourse = async (req, res) => {
+  try {
+    const courseId = Number(req.params.id);
 
+    if (!Number.isSafeInteger(courseId) || courseId < 1) {
+      return res.status(400).json({
+        message: 'El identificador del curso no es válido.',
+      });
+    }
+
+    const { Certificate } = require('../models');
+
+    const result = await Course.sequelize.transaction(
+      async (transaction) => {
+        const course = await Course.findByPk(courseId, {
+          transaction,
+          lock: transaction.LOCK.UPDATE,
+        });
+
+        if (!course) {
+          return {
+            status: 404,
+            message: 'Curso no encontrado.',
+          };
+        }
+
+        const [
+          modules,
+          enrollments,
+          evaluations,
+          certificates,
+        ] = await Promise.all([
+          Module.count({
+            where: { courseId },
+            transaction,
+          }),
+
+          UserCourse.count({
+            where: { courseId },
+            transaction,
+          }),
+
+          Evaluation.count({
+            where: { courseId },
+            transaction,
+          }),
+
+          Certificate.count({
+            where: { courseId },
+            transaction,
+          }),
+        ]);
+
+        if (
+          modules > 0 ||
+          enrollments > 0 ||
+          evaluations > 0 ||
+          certificates > 0
+        ) {
+          return {
+            status: 409,
+            message:
+              'Este curso tiene módulos, participantes, evaluaciones o certificados asociados. Puedes desactivarlo desde «Editar curso» para retirarlo del catálogo y conservar sus registros.',
+          };
+        }
+
+        await course.destroy({ transaction });
+
+        return {
+          status: 200,
+          message: 'Curso eliminado correctamente.',
+          courseId,
+        };
+      }
+    );
+
+    return res.status(result.status).json({
+      message: result.message,
+      ...(result.courseId
+        ? { courseId: result.courseId }
+        : {}),
+    });
+  } catch (error) {
+    console.error('Error eliminando curso:', error);
+
+    if (
+      error.name === 'SequelizeForeignKeyConstraintError'
+    ) {
+      return res.status(409).json({
+        message:
+          'El curso tiene información relacionada y no puede eliminarse. Puedes desactivarlo desde «Editar curso».',
+      });
+    }
+
+    return res.status(500).json({
+      message: 'No se pudo eliminar el curso.',
+    });
+  }
+};
 module.exports = {
-    getCourses,
-    getAdminCourses,
-    getCourseById,
-    createCourse,
-    updateCourse,
-    getCourseProgress
+  getCourses,
+  getAdminCourses,
+  getCourseById,
+  createCourse,
+  updateCourse,
+  getCourseProgress,
+  deleteCourse,
 };

@@ -15,7 +15,7 @@ const UserCourse = require('./UserCourse');
 const Certificate = require('./Certificate');
 const Foro = require('./Foro');
 const ForoComment = require('./ForoComment');
-
+const Topic = require('./Topic');
 // Relaciones de curso y módulos
 Course.hasMany(Module, { foreignKey: 'courseId' });
 Module.belongsTo(Course, { foreignKey: 'courseId' });
@@ -68,7 +68,14 @@ Evaluation.hasMany(EvaluationAttempt, {
 EvaluationAttempt.belongsTo(Evaluation, {
   foreignKey: 'evaluationId',
 });
+// Temas de cada módulo.
+Module.hasMany(Topic, {
+  foreignKey: 'moduleId',
+});
 
+Topic.belongsTo(Module, {
+  foreignKey: 'moduleId',
+});
 // Inscripciones y progreso del curso
 User.hasMany(UserCourse, { foreignKey: 'userId' });
 UserCourse.belongsTo(User, { foreignKey: 'userId' });
@@ -109,6 +116,7 @@ module.exports = {
   EvaluationAttempt,
   UserCourse,
   Certificate,
+  Topic,
   Foro,
   ForoComment,
 };

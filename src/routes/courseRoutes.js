@@ -1,21 +1,76 @@
 const express = require('express');
+
 const router = express.Router();
-const { getCourses, getAdminCourses, getCourseById, createCourse, updateCourse, getCourseProgress } = require('../controllers/courseController');
-const { protect } = require('../middlewares/authMiddleware');
-const { admin } = require('../middlewares/roleMiddleware');
 
-router.route('/')
-    .get(getCourses)
-    .post(protect, admin, createCourse);
+const {
+  getCourses,
+  getAdminCourses,
+  getCourseById,
+  createCourse,
+  updateCourse,
+  getCourseProgress,
+  deleteCourse,
+} = require('../controllers/courseController');
 
-router.route('/admin')
-    .get(protect, admin, getAdminCourses);
+const {
+  protect,
+} = require('../middlewares/authMiddleware');
 
-router.route('/:id')
-    .get(getCourseById)
-    .put(protect, admin, updateCourse);
+const {
+  courseAdmin,
+} = require('../middlewares/roleMiddleware');
 
-router.route('/:id/progress')
-    .get(protect, getCourseProgress);
+const {
+  validateResourceId,
+  validateCourseWrite,
+} = require('../middlewares/courseValidationMiddleware');
 
+router.get(
+  '/',
+  getCourses
+);
+
+router.get(
+  '/admin',
+  protect,
+  courseAdmin,
+  getAdminCourses
+);
+
+router.post(
+  '/',
+  protect,
+  courseAdmin,
+  validateCourseWrite,
+  createCourse
+);
+
+router.get(
+  '/:id/progress',
+  protect,
+  validateResourceId,
+  getCourseProgress
+);
+
+router.get(
+  '/:id',
+  validateResourceId,
+  getCourseById
+);
+
+router.put(
+  '/:id',
+  protect,
+  courseAdmin,
+  validateResourceId,
+  validateCourseWrite,
+  updateCourse
+);
+router.post(
+  '/:id/delete',
+  protect,
+  courseAdmin,
+  validateResourceId,
+  deleteCourse
+);
 module.exports = router;

@@ -6,16 +6,24 @@ const {
   getUsers,
   updateProfile,
   getMyProgress,
-  updateUserStatus,
   getUserById,
 } = require('../controllers/userController');
 
 const {
+  updateUserRole,
+  updateManagedUserStatus,
+  getManagedUserProgress,
+} = require('../controllers/adminUserController');
+
+const {
+  getStartedCourses,
+  startCourse,
+} = require('../controllers/courseEnrollmentController');
+
+const {
   getMyReadings,
   saveMyReadings,
-} = require(
-  '../controllers/readingProgressController'
-);
+} = require('../controllers/readingProgressController');
 
 const {
   protect,
@@ -23,9 +31,10 @@ const {
 
 const {
   admin,
+  superAdmin,
 } = require('../middlewares/roleMiddleware');
 
-/* Rutas de la cuenta del usuario autenticado */
+/* Cuenta del usuario autenticado */
 
 router.put(
   '/me',
@@ -40,6 +49,18 @@ router.get(
 );
 
 router.get(
+  '/me/courses/started',
+  protect,
+  getStartedCourses
+);
+
+router.post(
+  '/me/courses/:courseId/start',
+  protect,
+  startCourse
+);
+
+router.get(
   '/me/readings/:topicNumber',
   protect,
   getMyReadings
@@ -51,7 +72,7 @@ router.post(
   saveMyReadings
 );
 
-/* Rutas exclusivas para administradores */
+/* Administración */
 
 router.use(protect, admin);
 
@@ -61,13 +82,24 @@ router.get(
 );
 
 router.get(
-  '/:id',
-  getUserById
+  '/:id/progress',
+  getManagedUserProgress
+);
+
+router.put(
+  '/:id/role',
+  superAdmin,
+  updateUserRole
 );
 
 router.put(
   '/:id/status',
-  updateUserStatus
+  updateManagedUserStatus
+);
+
+router.get(
+  '/:id',
+  getUserById
 );
 
 module.exports = router;

@@ -85,9 +85,7 @@ const updateProfile = async (req, res) => {
       });
     }
 
-    const user = await User.findByPk(
-      req.user.id
-    );
+    const user = await User.findByPk(req.user.id);
 
     if (!user) {
       return res.status(404).json({
@@ -133,9 +131,7 @@ const updateProfile = async (req, res) => {
 // Actualizar el estado de un usuario.
 const updateUserStatus = async (req, res) => {
   try {
-    const user = await User.findByPk(
-      req.params.id
-    );
+    const user = await User.findByPk(req.params.id);
 
     if (!user) {
       return res.status(404).json({
@@ -201,7 +197,10 @@ const getUserById = async (req, res) => {
 const getMyProgress = async (req, res) => {
   try {
     const userId = req.user.id;
-    const isAdmin = req.user.role === 'ADMIN';
+    const isAdmin = [
+  'ADMIN',
+  'SUPERADMIN',
+].includes(req.user.role);
 
     const [
       userCourses,
@@ -333,14 +332,63 @@ const getMyProgress = async (req, res) => {
       }),
     ]);
 
+    // Solo se consideran videos pertenecientes
+    // a los cursos mostrados en Avance.
+    const courseVideoIds = new Set(
+      userCourses.flatMap((enrollment) =>
+        (enrollment.Course?.Modules || []).flatMap(
+          (module) =>
+            (module.Videos || []).map(
+              (video) => Number(video.id)
+            )
+        )
+      )
+    );
+
+    // Consolidar posibles registros repetidos.
+    // La consulta viene ordenada desde el más reciente.
     const progressByVideo = new Map();
 
-    videoProgress.forEach((progress) => {
-      progressByVideo.set(
-        progress.videoId,
-        progress
-      );
-    });
+    for (const row of videoProgress) {
+      const videoId = Number(row.videoId);
+
+      if (!courseVideoIds.has(videoId)) {
+        continue;
+      }
+
+      const item =
+        typeof row.get === 'function'
+          ? row.get({ plain: true })
+          : { ...row };
+
+      const previous = progressByVideo.get(videoId);
+
+      if (!previous) {
+        progressByVideo.set(videoId, item);
+      } else {
+        progressByVideo.set(videoId, {
+          ...previous,
+
+          is_completed:
+            previous.is_completed === true ||
+            item.is_completed === true,
+
+          percentage: Math.max(
+            Number(previous.percentage) || 0,
+            Number(item.percentage) || 0
+          ),
+
+          time_watched: Math.max(
+            Number(previous.time_watched) || 0,
+            Number(item.time_watched) || 0
+          ),
+        });
+      }
+    }
+
+    const currentVideoProgress = [
+      ...progressByVideo.values(),
+    ];
 
     let totalModules = 0;
     let completedModules = 0;
@@ -352,14 +400,24 @@ const getMyProgress = async (req, res) => {
 
         totalModules += modules.length;
 
-        const courseVideos = modules.flatMap(
-          (module) => module.Videos || []
-        );
+        // Cada video se cuenta una sola vez.
+        const courseVideos = [
+          ...new Map(
+            modules
+              .flatMap(
+                (module) => module.Videos || []
+              )
+              .map((video) => [
+                Number(video.id),
+                video,
+              ])
+          ).values(),
+        ];
 
         const completedVideos =
           courseVideos.filter((video) => {
             const progress =
-              progressByVideo.get(video.id);
+              progressByVideo.get(Number(video.id));
 
             return progress?.is_completed;
           }).length;
@@ -368,13 +426,13 @@ const getMyProgress = async (req, res) => {
           courseVideos.reduce(
             (total, video) => {
               const progress =
-                progressByVideo.get(video.id);
+                progressByVideo.get(
+                  Number(video.id)
+                );
 
               return (
                 total +
-                Number(
-                  progress?.percentage || 0
-                )
+                Number(progress?.percentage || 0)
               );
             },
             0
@@ -401,7 +459,7 @@ const getMyProgress = async (req, res) => {
               (video) => {
                 const progress =
                   progressByVideo.get(
-                    video.id
+                    Number(video.id)
                   );
 
                 return progress?.is_completed;
@@ -416,7 +474,7 @@ const getMyProgress = async (req, res) => {
               courseId: course.id,
               evaluationAttempts,
               allEvaluations,
-              videoProgress,
+              videoProgress: currentVideoProgress,
               readings,
               readingCatalog,
             })
@@ -426,10 +484,9 @@ const getMyProgress = async (req, res) => {
               first.order - second.order
           );
 
-        // El contador muestra módulos aprobados
-        // por sus evaluaciones e integradora.
-        // Las lecturas pendientes siguen influyendo
-        // en el porcentaje de avance.
+        // Módulos aprobados por sus evaluaciones
+        // e integradora. Las lecturas pendientes
+        // siguen influyendo en el porcentaje.
         const approvedCourseModules =
           Number(course.id) === 1
             ? moduleDetails.filter(
@@ -444,16 +501,12 @@ const getMyProgress = async (req, res) => {
               ).length
             : completedVideoModules;
 
-        completedModules +=
-          approvedCourseModules;
+        completedModules += approvedCourseModules;
 
         const courseProgress =
           userCourse.is_completed
             ? 100
-            : Math.min(
-                videoPercentage,
-                100
-              );
+            : Math.min(videoPercentage, 100);
 
         const detailedCourseProgress =
           Number(course.id) === 1 &&
@@ -496,10 +549,8 @@ const getMyProgress = async (req, res) => {
 
               return {
                 ...publicDetail,
-                evaluations:
-                  publicEvaluations,
-                integrative:
-                  publicIntegrative,
+                evaluations: publicEvaluations,
+                integrative: publicIntegrative,
               };
             });
 
@@ -509,8 +560,7 @@ const getMyProgress = async (req, res) => {
           description: course.description,
           imageUrl: course.image_url,
 
-          progress:
-            detailedCourseProgress,
+          progress: detailedCourseProgress,
 
           modules: visibleModules,
 
@@ -543,30 +593,28 @@ const getMyProgress = async (req, res) => {
       }
     );
 
-    const coursesStarted =
-      userCourses.length;
+    const coursesStarted = userCourses.length;
 
     const coursesCompleted =
       userCourses.filter(
         (course) => course.is_completed
       ).length;
 
+    // Contadores generales con videos únicos
+    // de los cursos que aparecen en Avance.
     const videosStarted =
-      videoProgress.length;
+      currentVideoProgress.length;
 
     const videosCompleted =
-      videoProgress.filter(
-        (progress) =>
-          progress.is_completed
+      currentVideoProgress.filter(
+        (progress) => progress.is_completed
       ).length;
 
     const totalWatchTime =
-      videoProgress.reduce(
+      currentVideoProgress.reduce(
         (total, progress) =>
           total +
-          Number(
-            progress.time_watched || 0
-          ),
+          Number(progress.time_watched || 0),
         0
       );
 
@@ -584,9 +632,7 @@ const getMyProgress = async (req, res) => {
             evaluationAttempts.reduce(
               (total, attempt) =>
                 total +
-                Number(
-                  attempt.score || 0
-                ),
+                Number(attempt.score || 0),
               0
             ) / evaluationsTaken
           )
@@ -597,9 +643,7 @@ const getMyProgress = async (req, res) => {
         ? Math.max(
             ...evaluationAttempts.map(
               (attempt) =>
-                Number(
-                  attempt.score || 0
-                )
+                Number(attempt.score || 0)
             )
           )
         : 0;
@@ -616,7 +660,7 @@ const getMyProgress = async (req, res) => {
         : 0;
 
     const videoActivity =
-      videoProgress.map((progress) => ({
+      currentVideoProgress.map((progress) => ({
         type:
           progress.is_completed
             ? 'video_completed'
@@ -644,39 +688,34 @@ const getMyProgress = async (req, res) => {
       }));
 
     const evaluationActivity =
-      evaluationAttempts.map(
-        (attempt) => ({
-          type:
-            attempt.passed
-              ? 'evaluation_passed'
-              : 'evaluation_attempt',
+      evaluationAttempts.map((attempt) => ({
+        type:
+          attempt.passed
+            ? 'evaluation_passed'
+            : 'evaluation_attempt',
 
-          title:
-            attempt.Evaluation?.title ||
-            'Evaluación',
+        title:
+          attempt.Evaluation?.title ||
+          'Evaluación',
 
-          course:
-            attempt.Evaluation
-              ?.Course?.name ||
-            'Curso',
+        course:
+          attempt.Evaluation?.Course?.name ||
+          'Curso',
 
-          detail:
-            attempt.passed
-              ? `Aprobada con ${attempt.score} puntos`
-              : `Calificación: ${attempt.score} puntos`,
+        detail:
+          attempt.passed
+            ? `Aprobada con ${attempt.score} puntos`
+            : `Calificación: ${attempt.score} puntos`,
 
-          date:
-            attempt.attempted_at,
-        })
-      );
+        date:
+          attempt.attempted_at,
+      }));
 
     const recentActivity = [
       ...videoActivity,
       ...evaluationActivity,
     ]
-      .filter(
-        (activity) => activity.date
-      )
+      .filter((activity) => activity.date)
       .sort(
         (first, second) =>
           new Date(second.date) -

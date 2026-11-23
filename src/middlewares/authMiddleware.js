@@ -2,34 +2,60 @@ const { verifyToken } = require('../utils/jwt');
 const { User } = require('../models');
 
 const protect = async (req, res, next) => {
-    let token;
+  const authorization = req.headers.authorization;
 
-    if (req.headers.authorization && req.headers.authorization.startsWith('Bearer')) {
-        try {
-            token = req.headers.authorization.split(' ')[1];
-            
-            const decoded = verifyToken(token);
-            
-            req.user = await User.findByPk(decoded.id, { attributes: { exclude: ['password'] } });
-            
-            if (!req.user) {
-                return res.status(401).json({ message: 'Not authorized, user not found' });
-            }
+  const match =
+    typeof authorization === 'string'
+      ? authorization.match(/^Bearer\s+(\S+)$/i)
+      : null;
 
-            if (!req.user.status) {
-                return res.status(401).json({ message: 'User account is deactivated' });
-            }
+  if (!match) {
+    return res.status(401).json({
+      message:
+        'Debes iniciar sesión para acceder a esta sección.',
+    });
+  }
 
-            next();
-        } catch (error) {
-            console.error(error);
-            return res.status(401).json({ message: 'Not authorized, token failed' });
-        }
+  try {
+    const decoded = verifyToken(match[1]);
+
+    // Los permisos se consultan en la base de datos.
+    // No se confía en el rol guardado en el token.
+    const user = await User.findByPk(decoded.id, {
+      attributes: {
+        exclude: ['password'],
+      },
+    });
+
+    if (!user) {
+      return res.status(401).json({
+        message: 'La cuenta no está disponible.',
+      });
     }
 
-    if (!token) {
-        return res.status(401).json({ message: 'Not authorized, no token' });
+    if (!user.status) {
+      return res.status(401).json({
+        message:
+          'Tu cuenta está desactivada. Comunícate con la administración.',
+      });
     }
+
+    req.user = user;
+  } catch (error) {
+    console.error(
+      'Error verificando la sesión:',
+      error.message
+    );
+
+    return res.status(401).json({
+      message:
+        'Tu sesión no es válida o ha caducado. Inicia sesión nuevamente.',
+    });
+  }
+
+  return next();
 };
 
-module.exports = { protect };
+module.exports = {
+  protect,
+};
