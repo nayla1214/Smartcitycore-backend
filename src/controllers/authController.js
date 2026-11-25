@@ -1,20 +1,111 @@
 const bcrypt = require('bcryptjs');
+const { resolveMx } = require('node:dns').promises;
 
 const { User } = require('../models');
+const { generateToken } = require('../utils/jwt');
 
-const {
-  generateToken,
-} = require('../utils/jwt');
+const NAME_PATTERN =
+  /^[\p{L}\p{M}]+(?:[ '’\-][\p{L}\p{M}]+)*$/u;
+
+const EMAIL_PATTERN =
+  /^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)+$/;
+
+const normalizeName = (value) =>
+  value.normalize('NFC').trim().replace(/\s+/gu, ' ');
+
+const normalizeEmail = (value) =>
+  value.trim().toLowerCase();
+
+const isValidEmail = (email) => {
+  if (email.length > 254 || !EMAIL_PATTERN.test(email)) {
+    return false;
+  }
+
+  const [local, domain] = email.split('@');
+
+  return (
+    local.length <= 64 &&
+    !local.startsWith('.') &&
+    !local.endsWith('.') &&
+    !local.includes('..') &&
+    domain.split('.').every((label) => label.length <= 63)
+  );
+};
+
+// Comprueba el dominio, no la existencia del buzón.
+const domainReceivesEmail = async (domain) => {
+  let timeout;
+
+  try {
+    const records = await Promise.race([
+      resolveMx(domain),
+      new Promise((_, reject) => {
+        timeout = setTimeout(() => {
+          const error = new Error('DNS timeout');
+          error.code = 'EMAIL_DNS_TIMEOUT';
+          reject(error);
+        }, 5000);
+      }),
+    ]);
+
+    return records.some(
+      (record) =>
+        record.exchange && record.exchange !== '.'
+    );
+  } finally {
+    clearTimeout(timeout);
+  }
+};
 
 // POST /api/auth/register
 // Público
 const registerUser = async (req, res) => {
   try {
-    const { name, email, password } = req.body;
+    const body = req.body || {};
 
-    if (!name || !email || !password) {
+    if (
+      typeof body.name !== 'string' ||
+      typeof body.email !== 'string' ||
+      typeof body.password !== 'string'
+    ) {
       return res.status(400).json({
-        message: 'Completa todos los campos.',
+        message: 'Completa todos los campos correctamente.',
+      });
+    }
+
+    const name = normalizeName(body.name);
+    const email = normalizeEmail(body.email);
+    const password = body.password;
+
+    if (
+      name.length < 2 ||
+      name.length > 120 ||
+      !NAME_PATTERN.test(name)
+    ) {
+      return res.status(400).json({
+        message:
+          'El nombre debe contener entre 2 y 120 caracteres. Usa letras, espacios, apóstrofos o guiones; no números.',
+      });
+    }
+
+    if (!isValidEmail(email)) {
+      return res.status(400).json({
+        message: 'Ingresa un correo electrónico válido.',
+      });
+    }
+
+    if (password.length < 6) {
+      return res.status(400).json({
+        message:
+          'La contraseña debe tener al menos 6 caracteres.',
+      });
+    }
+
+    // bcrypt admite como máximo 72 bytes.
+    if (Buffer.byteLength(password, 'utf8') > 72) {
+      return res.status(400).json({
+        message:
+          'La contraseña es demasiado larga. Usa una más corta.',
       });
     }
 
@@ -29,11 +120,42 @@ const registerUser = async (req, res) => {
       });
     }
 
-    const salt = await bcrypt.genSalt(10);
+    const domain = email.split('@')[1];
+
+    try {
+      const receivesEmail =
+        await domainReceivesEmail(domain);
+
+      if (!receivesEmail) {
+        return res.status(400).json({
+          message:
+            'El dominio de este correo no tiene un servidor de correo disponible. Revisa la dirección.',
+        });
+      }
+    } catch (error) {
+      if (
+        ['ENOTFOUND', 'ENODATA'].includes(error.code)
+      ) {
+        return res.status(400).json({
+          message:
+            'No se encontró un servidor de correo para ese dominio. Revisa la dirección.',
+        });
+      }
+
+      console.error(
+        'Error comprobando el dominio del correo:',
+        error.code
+      );
+
+      return res.status(503).json({
+        message:
+          'No se pudo comprobar el dominio del correo en este momento. Intenta nuevamente.',
+      });
+    }
 
     const hashedPassword = await bcrypt.hash(
       password,
-      salt
+      10
     );
 
     const user = await User.create({
@@ -41,16 +163,9 @@ const registerUser = async (req, res) => {
       email,
       password: hashedPassword,
 
-      // El registro público nunca asigna
-      // privilegios administrativos.
+      // El registro público solo crea participantes.
       role: 'USER',
     });
-
-    if (!user) {
-      return res.status(400).json({
-        message: 'Los datos de la cuenta no son válidos.',
-      });
-    }
 
     return res.status(201).json({
       _id: user.id,
@@ -80,16 +195,23 @@ const registerUser = async (req, res) => {
 // Público
 const loginUser = async (req, res) => {
   try {
-    const { email, password } = req.body;
+    const { email, password } = req.body || {};
 
-    if (!email || !password) {
+    if (
+      typeof email !== 'string' ||
+      typeof password !== 'string' ||
+      !email.trim() ||
+      !password
+    ) {
       return res.status(400).json({
         message: 'Ingresa tu correo y contraseña.',
       });
     }
 
     const user = await User.findOne({
-      where: { email },
+      where: {
+        email: normalizeEmail(email),
+      },
     });
 
     if (
