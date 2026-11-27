@@ -1,5 +1,15 @@
 const { Op } = require('sequelize');
-const { User } = require('../models');
+
+const {
+  User,
+  CourseTeacher,
+} = require('../models');
+
+const MANAGED_ROLES = [
+  'USER',
+  'ADMIN',
+  'DOCENTE',
+];
 
 const createHttpError = (status, message) => {
   const error = new Error(message);
@@ -18,10 +28,6 @@ const publicUser = (user) => ({
   updatedAt: user.updatedAt,
 });
 
-/*
- * Consulta y bloquea las cuentas durante el cambio.
- * También vuelve a comprobar los permisos del actor.
- */
 const getAccountsForUpdate = async (
   actorId,
   targetId,
@@ -96,12 +102,12 @@ const updateUserRole = async (req, res) => {
   try {
     const targetId = getTargetId(req.params.id);
     const actorId = Number(req.user.id);
-    const { role } = req.body;
+    const role = req.body?.role;
 
-    if (!['USER', 'ADMIN'].includes(role)) {
+    if (!MANAGED_ROLES.includes(role)) {
       return res.status(400).json({
         message:
-          'Solo puedes asignar los roles USER o ADMIN.',
+          'Solo puedes asignar los roles USER, ADMIN o DOCENTE.',
       });
     }
 
@@ -112,55 +118,75 @@ const updateUserRole = async (req, res) => {
       });
     }
 
-    const updatedUser = await User.sequelize.transaction(
-      async (transaction) => {
-        const { actor, target } =
-          await getAccountsForUpdate(
-            actorId,
-            targetId,
-            transaction
+    const updatedUser =
+      await User.sequelize.transaction(
+        async (transaction) => {
+          const { actor, target } =
+            await getAccountsForUpdate(
+              actorId,
+              targetId,
+              transaction
+            );
+
+          if (actor.role !== 'SUPERADMIN') {
+            throw createHttpError(
+              403,
+              'Solo el superadministrador puede cambiar roles.'
+            );
+          }
+
+          if (
+            !MANAGED_ROLES.includes(target.role)
+          ) {
+            throw createHttpError(
+              403,
+              'No puedes modificar el rol de esta cuenta.'
+            );
+          }
+
+          if (
+            role !== target.role &&
+            ['ADMIN', 'DOCENTE'].includes(role) &&
+            target.status !== true
+          ) {
+            throw createHttpError(
+              400,
+              'Activa la cuenta antes de asignarle el rol de administrador o docente.'
+            );
+          }
+
+          // Al retirar el rol docente se revocan
+          // sus asignaciones, dentro de la misma transacción.
+          if (
+            target.role === 'DOCENTE' &&
+            role !== 'DOCENTE'
+          ) {
+            await CourseTeacher.destroy({
+              where: { userId: target.id },
+              transaction,
+            });
+          }
+
+          await target.update(
+            { role },
+            { transaction }
           );
 
-        if (actor.role !== 'SUPERADMIN') {
-          throw createHttpError(
-            403,
-            'Solo el superadministrador puede cambiar roles.'
-          );
+          return publicUser(target);
         }
+      );
 
-        if (
-          !['USER', 'ADMIN'].includes(target.role)
-        ) {
-          throw createHttpError(
-            403,
-            'No puedes modificar el rol de esta cuenta.'
-          );
-        }
-
-        if (
-          role === 'ADMIN' &&
-          target.status !== true
-        ) {
-          throw createHttpError(
-            400,
-            'Activa la cuenta antes de asignarle el rol de administrador.'
-          );
-        }
-
-        await target.update(
-          { role },
-          { transaction }
-        );
-
-        return publicUser(target);
-      }
-    );
+    const messages = {
+      USER:
+        'La cuenta ahora tiene permisos de participante.',
+      ADMIN:
+        'La cuenta ahora tiene permisos de administrador.',
+      DOCENTE:
+        'La cuenta ahora tiene permisos de docente.',
+    };
 
     return res.status(200).json({
-      message:
-        role === 'ADMIN'
-          ? 'La cuenta ahora tiene permisos de administrador.'
-          : 'La cuenta ahora tiene permisos de participante.',
+      message: messages[role],
       user: updatedUser,
     });
   } catch (error) {
@@ -173,13 +199,13 @@ const updateUserRole = async (req, res) => {
 };
 
 // PUT /api/users/:id/status
-// ADMIN: solo participantes.
-// SUPERADMIN: participantes y administradores.
+// ADMIN: participantes y docentes.
+// SUPERADMIN: participantes, docentes y administradores.
 const updateManagedUserStatus = async (req, res) => {
   try {
     const targetId = getTargetId(req.params.id);
     const actorId = Number(req.user.id);
-    const { status } = req.body;
+    const status = req.body?.status;
 
     if (typeof status !== 'boolean') {
       return res.status(400).json({
@@ -195,51 +221,56 @@ const updateManagedUserStatus = async (req, res) => {
       });
     }
 
-    const updatedUser = await User.sequelize.transaction(
-      async (transaction) => {
-        const { actor, target } =
-          await getAccountsForUpdate(
-            actorId,
-            targetId,
-            transaction
+    const updatedUser =
+      await User.sequelize.transaction(
+        async (transaction) => {
+          const { actor, target } =
+            await getAccountsForUpdate(
+              actorId,
+              targetId,
+              transaction
+            );
+
+          if (
+            !['ADMIN', 'SUPERADMIN'].includes(
+              actor.role
+            )
+          ) {
+            throw createHttpError(
+              403,
+              'No tienes permisos administrativos.'
+            );
+          }
+
+          if (
+            !MANAGED_ROLES.includes(target.role)
+          ) {
+            throw createHttpError(
+              403,
+              'No puedes cambiar el estado de esta cuenta.'
+            );
+          }
+
+          if (
+            actor.role === 'ADMIN' &&
+            !['USER', 'DOCENTE'].includes(
+              target.role
+            )
+          ) {
+            throw createHttpError(
+              403,
+              'El director solo puede activar o desactivar participantes y docentes.'
+            );
+          }
+
+          await target.update(
+            { status },
+            { transaction }
           );
 
-        if (
-          !['ADMIN', 'SUPERADMIN'].includes(actor.role)
-        ) {
-          throw createHttpError(
-            403,
-            'No tienes permisos administrativos.'
-          );
+          return publicUser(target);
         }
-
-        if (
-          !['USER', 'ADMIN'].includes(target.role)
-        ) {
-          throw createHttpError(
-            403,
-            'No puedes cambiar el estado de esta cuenta.'
-          );
-        }
-
-        if (
-          actor.role === 'ADMIN' &&
-          target.role !== 'USER'
-        ) {
-          throw createHttpError(
-            403,
-            'El director solo puede activar o desactivar cuentas de participantes.'
-          );
-        }
-
-        await target.update(
-          { status },
-          { transaction }
-        );
-
-        return publicUser(target);
-      }
-    );
+      );
 
     return res.status(200).json({
       message: status
@@ -255,15 +286,19 @@ const updateManagedUserStatus = async (req, res) => {
     );
   }
 };
+
 // GET /api/users/:id/progress
-// Consulta administrativa del avance de un participante.
+// Seguimiento administrativo de participantes.
 const getManagedUserProgress = async (req, res) => {
   try {
     if (
-      !['ADMIN', 'SUPERADMIN'].includes(req.user?.role)
+      !['ADMIN', 'SUPERADMIN'].includes(
+        req.user?.role
+      )
     ) {
       return res.status(403).json({
-        message: 'No tienes permisos administrativos.',
+        message:
+          'No tienes permisos administrativos.',
       });
     }
 
@@ -297,8 +332,6 @@ const getManagedUserProgress = async (req, res) => {
       EvaluationAttempt,
     } = require('../models');
 
-    // Reutiliza el cálculo existente sin modificar
-    // la identidad de quien realiza la consulta.
     let progressStatus = 200;
     let progressData;
 
@@ -324,43 +357,49 @@ const getManagedUserProgress = async (req, res) => {
       progressResponse
     );
 
-    if (progressStatus !== 200 || !progressData) {
-      return res.status(progressStatus || 500).json(
-        progressData || {
-          message:
-            'No se pudo consultar el avance del participante.',
-        }
-      );
+    if (
+      progressStatus !== 200 ||
+      !progressData
+    ) {
+      return res
+        .status(progressStatus || 500)
+        .json(
+          progressData || {
+            message:
+              'No se pudo consultar el avance del participante.',
+          }
+        );
     }
 
-    const attempts = await EvaluationAttempt.findAll({
-      where: {
-        userId: target.id,
-      },
-      attributes: [
-        'id',
-        'evaluationId',
-        'score',
-        'passed',
-        'attempted_at',
-      ],
-      include: [
-        {
-          model: Evaluation,
-          attributes: [
-            'id',
-            'title',
-            'moduleId',
-            'courseId',
-            'is_final',
-          ],
+    const attempts =
+      await EvaluationAttempt.findAll({
+        where: {
+          userId: target.id,
         },
-      ],
-      order: [
-        ['attempted_at', 'DESC'],
-        ['id', 'DESC'],
-      ],
-    });
+        attributes: [
+          'id',
+          'evaluationId',
+          'score',
+          'passed',
+          'attempted_at',
+        ],
+        include: [
+          {
+            model: Evaluation,
+            attributes: [
+              'id',
+              'title',
+              'moduleId',
+              'courseId',
+              'is_final',
+            ],
+          },
+        ],
+        order: [
+          ['attempted_at', 'DESC'],
+          ['id', 'DESC'],
+        ],
+      });
 
     return res.status(200).json({
       ...progressData,
@@ -369,7 +408,8 @@ const getManagedUserProgress = async (req, res) => {
         id: attempt.id,
         evaluationId: attempt.evaluationId,
         title:
-          attempt.Evaluation?.title || 'Evaluación',
+          attempt.Evaluation?.title ||
+          'Evaluación',
         moduleId:
           attempt.Evaluation?.moduleId ?? null,
         courseId:
@@ -387,6 +427,7 @@ const getManagedUserProgress = async (req, res) => {
     );
   }
 };
+
 module.exports = {
   updateUserRole,
   updateManagedUserStatus,

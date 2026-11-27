@@ -30,7 +30,8 @@ const User = sequelize.define(
       type: DataTypes.ENUM(
         'USER',
         'ADMIN',
-        'SUPERADMIN'
+        'SUPERADMIN',
+        'DOCENTE'
       ),
       defaultValue: 'USER',
     },

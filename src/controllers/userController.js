@@ -1,12 +1,7 @@
 const { Op } = require('sequelize');
 
-const ReadingProgress = require(
-  '../models/ReadingProgress'
-);
-
-const readingCatalog = require(
-  '../data/readingCatalog.json'
-);
+const ReadingProgress = require('../models/ReadingProgress');
+const readingCatalog = require('../data/readingCatalog.json');
 
 const {
   buildModuleProgress,
@@ -61,8 +56,7 @@ const updateProfile = async (req, res) => {
       });
     }
 
-    const emailPattern =
-      /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
     if (!emailPattern.test(email)) {
       return res.status(400).json({
@@ -108,15 +102,9 @@ const updateProfile = async (req, res) => {
       updatedAt: user.updatedAt,
     });
   } catch (error) {
-    console.error(
-      'Error al actualizar el perfil:',
-      error
-    );
+    console.error('Error al actualizar el perfil:', error);
 
-    if (
-      error.name ===
-      'SequelizeUniqueConstraintError'
-    ) {
+    if (error.name === 'SequelizeUniqueConstraintError') {
       return res.status(400).json({
         message: 'Este correo electrónico ya está registrado',
       });
@@ -140,7 +128,6 @@ const updateUserStatus = async (req, res) => {
     }
 
     user.status = req.body.status;
-
     await user.save();
 
     return res.status(200).json({
@@ -160,22 +147,20 @@ const updateUserStatus = async (req, res) => {
 };
 
 // Consultar un usuario con sus cursos.
+// Se conserva el historial para la administración.
 const getUserById = async (req, res) => {
   try {
-    const user = await User.findByPk(
-      req.params.id,
-      {
-        attributes: {
-          exclude: ['password'],
+    const user = await User.findByPk(req.params.id, {
+      attributes: {
+        exclude: ['password'],
+      },
+      include: [
+        {
+          model: UserCourse,
+          include: [Course],
         },
-        include: [
-          {
-            model: UserCourse,
-            include: [Course],
-          },
-        ],
-      }
-    );
+      ],
+    });
 
     if (!user) {
       return res.status(404).json({
@@ -194,32 +179,37 @@ const getUserById = async (req, res) => {
 };
 
 // Consultar el avance del usuario autenticado.
+// El resumen considera solamente cursos activos.
 const getMyProgress = async (req, res) => {
   try {
     const userId = req.user.id;
-    const isAdmin = [
-  'ADMIN',
-  'SUPERADMIN',
-].includes(req.user.role);
+
+    const isAdmin = ['ADMIN', 'SUPERADMIN'].includes(
+      req.user.role
+    );
 
     const [
-      userCourses,
+      enrollmentRows,
       videoProgress,
-      evaluationAttempts,
+      allUserAttempts,
     ] = await Promise.all([
       UserCourse.findAll({
-        where: {
-          userId,
-        },
+        where: { userId },
         include: [
           {
             model: Course,
+
+            // Excluye cursos desactivados o inexistentes.
+            required: true,
+            where: { status: true },
+
             attributes: [
               'id',
               'name',
               'description',
               'image_url',
             ],
+
             include: [
               {
                 model: Module,
@@ -246,32 +236,19 @@ const getMyProgress = async (req, res) => {
       }),
 
       VideoProgress.findAll({
-        where: {
-          userId,
-        },
+        where: { userId },
         include: [
           {
             model: Video,
-            attributes: [
-              'id',
-              'title',
-              'moduleId',
-            ],
+            attributes: ['id', 'title', 'moduleId'],
             include: [
               {
                 model: Module,
-                attributes: [
-                  'id',
-                  'title',
-                  'courseId',
-                ],
+                attributes: ['id', 'title', 'courseId'],
                 include: [
                   {
                     model: Course,
-                    attributes: [
-                      'id',
-                      'name',
-                    ],
+                    attributes: ['id', 'name'],
                   },
                 ],
               },
@@ -282,9 +259,7 @@ const getMyProgress = async (req, res) => {
       }),
 
       EvaluationAttempt.findAll({
-        where: {
-          userId,
-        },
+        where: { userId },
         include: [
           {
             model: Evaluation,
@@ -298,10 +273,7 @@ const getMyProgress = async (req, res) => {
             include: [
               {
                 model: Course,
-                attributes: [
-                  'id',
-                  'name',
-                ],
+                attributes: ['id', 'name'],
               },
             ],
           },
@@ -310,33 +282,58 @@ const getMyProgress = async (req, res) => {
       }),
     ]);
 
-    const [
-      allEvaluations,
-      readings,
-    ] = await Promise.all([
-      Evaluation.findAll({
-        attributes: [
-          'id',
-          'title',
-          'moduleId',
-          'courseId',
-          'is_final',
-        ],
-      }),
+    // Evita contar dos veces un curso si hubiera
+    // inscripciones repetidas.
+    const userCourses = [
+      ...new Map(
+        enrollmentRows
+          .filter((row) => row.Course)
+          .map((row) => [
+            Number(row.Course.id),
+            row,
+          ])
+          .reverse()
+      ).values(),
+    ];
+
+    const activeCourseIds = new Set(
+      userCourses.map((row) => Number(row.Course.id))
+    );
+
+    const [allEvaluations, readings] = await Promise.all([
+      activeCourseIds.size > 0
+        ? Evaluation.findAll({
+            where: {
+              courseId: {
+                [Op.in]: [...activeCourseIds],
+              },
+            },
+            attributes: [
+              'id',
+              'title',
+              'moduleId',
+              'courseId',
+              'is_final',
+            ],
+          })
+        : Promise.resolve([]),
 
       ReadingProgress.findAll({
-        where: {
-          userId,
-        },
+        where: { userId },
         raw: true,
       }),
     ]);
 
-    // Solo se consideran videos pertenecientes
-    // a los cursos mostrados en Avance.
+    const evaluationAttempts = allUserAttempts.filter(
+      (attempt) =>
+        activeCourseIds.has(
+          Number(attempt.Evaluation?.courseId)
+        )
+    );
+
     const courseVideoIds = new Set(
       userCourses.flatMap((enrollment) =>
-        (enrollment.Course?.Modules || []).flatMap(
+        (enrollment.Course.Modules || []).flatMap(
           (module) =>
             (module.Videos || []).map(
               (video) => Number(video.id)
@@ -345,16 +342,13 @@ const getMyProgress = async (req, res) => {
       )
     );
 
-    // Consolidar posibles registros repetidos.
-    // La consulta viene ordenada desde el más reciente.
+    // Consolida posibles registros repetidos de videos.
     const progressByVideo = new Map();
 
     for (const row of videoProgress) {
       const videoId = Number(row.videoId);
 
-      if (!courseVideoIds.has(videoId)) {
-        continue;
-      }
+      if (!courseVideoIds.has(videoId)) continue;
 
       const item =
         typeof row.get === 'function'
@@ -393,123 +387,122 @@ const getMyProgress = async (req, res) => {
     let totalModules = 0;
     let completedModules = 0;
 
-    const courses = userCourses.map(
-      (userCourse) => {
-        const course = userCourse.Course;
-        const modules = course?.Modules || [];
+    const courses = userCourses.map((userCourse) => {
+      const course = userCourse.Course;
+      const modules = course.Modules || [];
 
-        totalModules += modules.length;
+      totalModules += modules.length;
 
-        // Cada video se cuenta una sola vez.
-        const courseVideos = [
-          ...new Map(
-            modules
-              .flatMap(
-                (module) => module.Videos || []
-              )
-              .map((video) => [
-                Number(video.id),
-                video,
-              ])
-          ).values(),
-        ];
+      const courseVideos = [
+        ...new Map(
+          modules
+            .flatMap((module) => module.Videos || [])
+            .map((video) => [Number(video.id), video])
+        ).values(),
+      ];
 
-        const completedVideos =
-          courseVideos.filter((video) => {
-            const progress =
-              progressByVideo.get(Number(video.id));
+      const completedVideos = courseVideos.filter(
+        (video) =>
+          progressByVideo.get(Number(video.id))
+            ?.is_completed === true
+      ).length;
 
-            return progress?.is_completed;
-          }).length;
-
-        const accumulatedVideoProgress =
-          courseVideos.reduce(
-            (total, video) => {
-              const progress =
-                progressByVideo.get(
-                  Number(video.id)
-                );
-
-              return (
-                total +
-                Number(progress?.percentage || 0)
-              );
-            },
-            0
+      const accumulatedVideoProgress =
+        courseVideos.reduce((total, video) => {
+          const progress = progressByVideo.get(
+            Number(video.id)
           );
 
-        const videoPercentage =
-          courseVideos.length > 0
-            ? Math.round(
-                accumulatedVideoProgress /
-                  courseVideos.length
-              )
-            : 0;
-
-        const completedVideoModules =
-          modules.filter((module) => {
-            const moduleVideos =
-              module.Videos || [];
-
-            if (moduleVideos.length === 0) {
-              return false;
-            }
-
-            return moduleVideos.every(
-              (video) => {
-                const progress =
-                  progressByVideo.get(
-                    Number(video.id)
-                  );
-
-                return progress?.is_completed;
-              }
-            );
-          }).length;
-
-        const moduleDetails = modules
-          .map((module) =>
-            buildModuleProgress({
-              module,
-              courseId: course.id,
-              evaluationAttempts,
-              allEvaluations,
-              videoProgress: currentVideoProgress,
-              readings,
-              readingCatalog,
-            })
-          )
-          .sort(
-            (first, second) =>
-              first.order - second.order
-          );
-
-        // Módulos aprobados por sus evaluaciones
-        // e integradora. Las lecturas pendientes
-        // siguen influyendo en el porcentaje.
-        const approvedCourseModules =
-          Number(course.id) === 1
-            ? moduleDetails.filter(
-                (module) =>
-                  module.supported &&
-                  module.evaluations.length > 0 &&
-                  module.evaluations.every(
-                    (evaluation) =>
-                      evaluation.passed
-                  ) &&
-                  module.integrative.passed
-              ).length
-            : completedVideoModules;
-
-        completedModules += approvedCourseModules;
-
-        const courseProgress =
-          userCourse.is_completed
+          const percentage = progress?.is_completed
             ? 100
-            : Math.min(videoPercentage, 100);
+            : Math.max(
+                0,
+                Math.min(
+                  100,
+                  Number(progress?.percentage) || 0
+                )
+              );
 
-        const detailedCourseProgress =
-          Number(course.id) === 1 &&
+          return total + percentage;
+        }, 0);
+
+      const videoPercentage =
+        courseVideos.length > 0
+          ? Math.round(
+              accumulatedVideoProgress /
+                courseVideos.length
+            )
+          : 0;
+
+      const completedVideoModules = modules.filter(
+        (module) => {
+          const videos = module.Videos || [];
+
+          return (
+            videos.length > 0 &&
+            videos.every(
+              (video) =>
+                progressByVideo.get(Number(video.id))
+                  ?.is_completed === true
+            )
+          );
+        }
+      ).length;
+
+      const moduleDetails = modules
+        .map((module) =>
+          buildModuleProgress({
+            module,
+            courseId: course.id,
+            evaluationAttempts,
+            allEvaluations,
+            videoProgress: currentVideoProgress,
+            readings,
+            readingCatalog,
+          })
+        )
+        .sort((first, second) => first.order - second.order);
+
+      const isSmartCityCourse = Number(course.id) === 1;
+
+      const approvedCourseModules = isSmartCityCourse
+        ? moduleDetails.filter(
+            (module) =>
+              module.supported &&
+              module.evaluations.length > 0 &&
+              module.evaluations.every(
+                (evaluation) => evaluation.passed
+              ) &&
+              module.integrative.passed
+          ).length
+        : completedVideoModules;
+
+      completedModules += approvedCourseModules;
+
+      // El curso 1 solo está completo cuando sus
+      // tres módulos cumplen todos los requisitos.
+      const smartCityCompleted =
+        moduleDetails.length === 3 &&
+        [1, 2, 3].every((order) => {
+          const matches = moduleDetails.filter(
+            (module) => Number(module.order) === order
+          );
+
+          return (
+            matches.length === 1 &&
+            matches[0].supported === true &&
+            matches[0].completed === true
+          );
+        });
+
+      const isCompleted = isSmartCityCourse
+        ? smartCityCompleted
+        : userCourse.is_completed === true;
+
+      let progress;
+
+      if (isSmartCityCourse) {
+        const detailedProgress =
           moduleDetails.length > 0
             ? Math.floor(
                 moduleDetails.reduce(
@@ -518,198 +511,164 @@ const getMyProgress = async (req, res) => {
                   0
                 ) / moduleDetails.length
               )
-            : courseProgress;
+            : 0;
 
-        // Solo los administradores reciben
-        // los contadores de intentos por módulo.
-        const visibleModules = isAdmin
-          ? moduleDetails
-          : moduleDetails.map((detail) => {
-              const {
-                evaluationAttempts,
-                ...publicDetail
-              } = detail;
-
-              const publicEvaluations =
-                detail.evaluations.map(
-                  (evaluation) => {
-                    const {
-                      attempts,
-                      ...publicEvaluation
-                    } = evaluation;
-
-                    return publicEvaluation;
-                  }
-                );
-
-              const {
-                attempts,
-                ...publicIntegrative
-              } = detail.integrative;
-
-              return {
-                ...publicDetail,
-                evaluations: publicEvaluations,
-                integrative: publicIntegrative,
-              };
-            });
-
-        return {
-          id: course.id,
-          name: course.name,
-          description: course.description,
-          imageUrl: course.image_url,
-
-          progress: detailedCourseProgress,
-
-          modules: visibleModules,
-
-          currentModuleId:
-            userCourse.current_module_id,
-
-          isCompleted:
-            userCourse.is_completed,
-
-          finalScore:
-            userCourse.final_score,
-
-          totalModules:
-            modules.length,
-
-          completedModules:
-            approvedCourseModules,
-
-          totalVideos:
-            courseVideos.length,
-
-          completedVideos,
-
-          startedAt:
-            userCourse.createdAt,
-
-          lastActivity:
-            userCourse.updatedAt,
-        };
+        progress = isCompleted
+          ? 100
+          : Math.min(99, detailedProgress);
+      } else {
+        progress = isCompleted
+          ? 100
+          : Math.min(99, videoPercentage);
       }
+
+      // Conserva la restricción de contadores de intentos.
+      const visibleModules = isAdmin
+        ? moduleDetails
+        : moduleDetails.map((detail) => {
+            const {
+              evaluationAttempts: moduleAttemptCount,
+              ...publicDetail
+            } = detail;
+
+            const publicEvaluations =
+              detail.evaluations.map((evaluation) => {
+                const {
+                  attempts,
+                  ...publicEvaluation
+                } = evaluation;
+
+                return publicEvaluation;
+              });
+
+            const {
+              attempts,
+              ...publicIntegrative
+            } = detail.integrative;
+
+            return {
+              ...publicDetail,
+              evaluations: publicEvaluations,
+              integrative: publicIntegrative,
+            };
+          });
+
+      return {
+        id: course.id,
+        name: course.name,
+        description: course.description,
+        imageUrl: course.image_url,
+
+        progress,
+        modules: visibleModules,
+        currentModuleId: userCourse.current_module_id,
+
+        // Ya no depende únicamente del indicador
+        // guardado en la inscripción para el curso 1.
+        isCompleted,
+
+        finalScore: userCourse.final_score,
+        totalModules: modules.length,
+        completedModules: approvedCourseModules,
+        totalVideos: courseVideos.length,
+        completedVideos,
+        startedAt: userCourse.createdAt,
+        lastActivity: userCourse.updatedAt,
+      };
+    });
+
+    const coursesStarted = courses.length;
+
+    // Usa la misma comprobación que las tarjetas.
+    const coursesCompleted = courses.filter(
+      (course) => course.isCompleted
+    ).length;
+
+    const videosStarted = currentVideoProgress.length;
+
+    const videosCompleted = currentVideoProgress.filter(
+      (progress) => progress.is_completed === true
+    ).length;
+
+    const totalWatchTime = currentVideoProgress.reduce(
+      (total, progress) =>
+        total +
+        Math.max(0, Number(progress.time_watched) || 0),
+      0
     );
 
-    const coursesStarted = userCourses.length;
+    const evaluationsTaken = evaluationAttempts.length;
 
-    const coursesCompleted =
-      userCourses.filter(
-        (course) => course.is_completed
-      ).length;
-
-    // Contadores generales con videos únicos
-    // de los cursos que aparecen en Avance.
-    const videosStarted =
-      currentVideoProgress.length;
-
-    const videosCompleted =
-      currentVideoProgress.filter(
-        (progress) => progress.is_completed
-      ).length;
-
-    const totalWatchTime =
-      currentVideoProgress.reduce(
-        (total, progress) =>
-          total +
-          Number(progress.time_watched || 0),
-        0
-      );
-
-    const evaluationsTaken =
-      evaluationAttempts.length;
-
-    const evaluationsPassed =
-      evaluationAttempts.filter(
-        (attempt) => attempt.passed
-      ).length;
+    const evaluationsPassed = evaluationAttempts.filter(
+      (attempt) => attempt.passed === true
+    ).length;
 
     const averageScore =
       evaluationsTaken > 0
         ? Math.round(
             evaluationAttempts.reduce(
               (total, attempt) =>
-                total +
-                Number(attempt.score || 0),
+                total + (Number(attempt.score) || 0),
               0
             ) / evaluationsTaken
           )
         : 0;
 
-    const bestScore =
-      evaluationsTaken > 0
-        ? Math.max(
-            ...evaluationAttempts.map(
-              (attempt) =>
-                Number(attempt.score || 0)
-            )
-          )
-        : 0;
+    const bestScore = evaluationAttempts.reduce(
+      (best, attempt) =>
+        Math.max(best, Number(attempt.score) || 0),
+      0
+    );
 
+    // Promedio de los cursos activos iniciados.
     const overallProgress =
       courses.length > 0
-        ? Math.round(
+        ? Math.floor(
             courses.reduce(
-              (total, course) =>
-                total + course.progress,
+              (total, course) => total + course.progress,
               0
             ) / courses.length
           )
         : 0;
 
-    const videoActivity =
-      currentVideoProgress.map((progress) => ({
-        type:
-          progress.is_completed
-            ? 'video_completed'
-            : 'video_progress',
+    const videoActivity = currentVideoProgress.map(
+      (progress) => ({
+        type: progress.is_completed
+          ? 'video_completed'
+          : 'video_progress',
 
-        title:
-          progress.Video?.title ||
-          'Contenido en video',
+        title: progress.Video?.title || 'Contenido en video',
 
         course:
-          progress.Video?.Module
-            ?.Course?.name ||
-          'Curso',
+          progress.Video?.Module?.Course?.name || 'Curso',
 
-        detail:
-          progress.is_completed
-            ? 'Video completado'
-            : `${Math.round(
-                progress.percentage || 0
-              )}% visualizado`,
+        detail: progress.is_completed
+          ? 'Video completado'
+          : `${Math.round(
+              progress.percentage || 0
+            )}% visualizado`,
 
-        date:
-          progress.completed_at ||
-          progress.updatedAt,
-      }));
+        date: progress.completed_at || progress.updatedAt,
+      })
+    );
 
-    const evaluationActivity =
-      evaluationAttempts.map((attempt) => ({
-        type:
-          attempt.passed
-            ? 'evaluation_passed'
-            : 'evaluation_attempt',
+    const evaluationActivity = evaluationAttempts.map(
+      (attempt) => ({
+        type: attempt.passed
+          ? 'evaluation_passed'
+          : 'evaluation_attempt',
 
-        title:
-          attempt.Evaluation?.title ||
-          'Evaluación',
+        title: attempt.Evaluation?.title || 'Evaluación',
 
-        course:
-          attempt.Evaluation?.Course?.name ||
-          'Curso',
+        course: attempt.Evaluation?.Course?.name || 'Curso',
 
-        detail:
-          attempt.passed
-            ? `Aprobada con ${attempt.score} puntos`
-            : `Calificación: ${attempt.score} puntos`,
+        detail: attempt.passed
+          ? `Aprobada con ${attempt.score} puntos`
+          : `Calificación: ${attempt.score} puntos`,
 
-        date:
-          attempt.attempted_at,
-      }));
+        date: attempt.attempted_at,
+      })
+    );
 
     const recentActivity = [
       ...videoActivity,
@@ -718,8 +677,7 @@ const getMyProgress = async (req, res) => {
       .filter((activity) => activity.date)
       .sort(
         (first, second) =>
-          new Date(second.date) -
-          new Date(first.date)
+          new Date(second.date) - new Date(first.date)
       )
       .slice(0, 8);
 
@@ -738,16 +696,11 @@ const getMyProgress = async (req, res) => {
         averageScore,
         bestScore,
       },
-
       courses,
-
       recentActivity,
     });
   } catch (error) {
-    console.error(
-      'Error al consultar el avance:',
-      error
-    );
+    console.error('Error al consultar el avance:', error);
 
     return res.status(500).json({
       message:

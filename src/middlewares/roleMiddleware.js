@@ -1,5 +1,4 @@
-// Administración general:
-// ADMIN y SUPERADMIN.
+// Administración general: ADMIN y SUPERADMIN.
 const admin = (req, res, next) => {
   if (
     req.user &&
@@ -13,8 +12,7 @@ const admin = (req, res, next) => {
   });
 };
 
-// Gestión de roles:
-// solo SUPERADMIN.
+// Gestión de roles: solo SUPERADMIN.
 const superAdmin = (req, res, next) => {
   if (req.user?.role === 'SUPERADMIN') {
     return next();
@@ -26,8 +24,7 @@ const superAdmin = (req, res, next) => {
   });
 };
 
-// Gestión de cursos:
-// solo administrador tutor.
+// Administración de cursos: solo administrador tutor.
 const courseAdmin = (req, res, next) => {
   if (req.user?.role === 'ADMIN') {
     return next();
@@ -39,8 +36,22 @@ const courseAdmin = (req, res, next) => {
   });
 };
 
+// Acceso al área docente.
+// Cada operación debe comprobar además el curso asignado.
+const teacher = (req, res, next) => {
+  if (req.user?.role === 'DOCENTE') {
+    return next();
+  }
+
+  return res.status(403).json({
+    message:
+      'Esta sección está disponible únicamente para docentes.',
+  });
+};
+
 module.exports = {
   admin,
   superAdmin,
   courseAdmin,
+  teacher,
 };

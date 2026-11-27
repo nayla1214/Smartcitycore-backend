@@ -24,13 +24,11 @@ const ownedComments = (userId, id) => {
         : { id }),
     },
 
-    attributes: [
-      'id',
-      'postId',
-      'userId',
-      'content',
-      'createdAt',
-    ],
+  attributes: [
+  'id',
+  'name',
+  'role',
+],
 
     include: [
       {
@@ -129,8 +127,9 @@ const getNotifications = async (req, res) => {
           comment.Foro.topicNumber,
 
         actorName:
+        
           comment.User.name,
-
+actorRole: comment.User.role,
         content:
           comment.content,
 

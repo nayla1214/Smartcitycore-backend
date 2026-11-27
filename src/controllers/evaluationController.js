@@ -4,7 +4,6 @@ const {
   Option,
   EvaluationAttempt,
   UserCourse,
-  Certificate,
 } = require('../models');
 
 // POST /api/evaluations — Solo ADMIN
@@ -303,47 +302,29 @@ const submitEvaluation = async (req, res) => {
       passed,
     });
 
-    if (passed) {
+        if (passed) {
       const courseId = evaluation.courseId;
 
-      if (evaluation.is_final) {
-        const [userCourse] =
-          await UserCourse.findOrCreate({
-            where: {
-              userId: req.user.id,
-              courseId,
-            },
-            defaults: {
-              userId: req.user.id,
-              courseId,
-            },
-          });
+      const [userCourse] = await UserCourse.findOrCreate({
+        where: {
+          userId: req.user.id,
+          courseId,
+        },
+        defaults: {
+          userId: req.user.id,
+          courseId,
+        },
+      });
 
+      // El curso 1 se completa y certifica únicamente
+      // después de comprobar todos sus requisitos.
+      if (
+        evaluation.is_final &&
+        Number(courseId) !== 1
+      ) {
         await userCourse.update({
           is_completed: true,
           final_score: percentage,
-        });
-
-        await Certificate.findOrCreate({
-          where: {
-            userId: req.user.id,
-            courseId,
-          },
-          defaults: {
-            userId: req.user.id,
-            courseId,
-          },
-        });
-      } else {
-        await UserCourse.findOrCreate({
-          where: {
-            userId: req.user.id,
-            courseId,
-          },
-          defaults: {
-            userId: req.user.id,
-            courseId,
-          },
         });
       }
     }

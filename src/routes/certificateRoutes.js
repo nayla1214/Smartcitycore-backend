@@ -1,12 +1,24 @@
 const express = require('express');
 const router = express.Router();
-const { getMyCertificates, getCertificateByCode } = require('../controllers/certificateController');
-const { protect } = require('../middlewares/authMiddleware');
 
-router.route('/')
-    .get(protect, getMyCertificates);
+const {
+  getMyCertificates,
+  getCertificateByCode,
+  issueCertificate,
+} = require('../controllers/certificateController');
 
-router.route('/:code')
-    .get(getCertificateByCode); // Verificación pública de certificado
+const {
+  protect,
+} = require('../middlewares/authMiddleware');
+
+router.get('/', protect, getMyCertificates);
+
+router.post(
+  '/course/:courseId/issue',
+  protect,
+  issueCertificate
+);
+
+router.get('/:code', getCertificateByCode);
 
 module.exports = router;
